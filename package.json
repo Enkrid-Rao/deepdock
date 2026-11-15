@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
-  "description": "DeepDock — a quiet, local Windows desktop front-end for DeepSeek web chat, with nested projects, project memory, web history sync and themes.",
+  "description": "DeepDock — a quiet, local Windows desktop front-end for DeepSeek web chat, with projects, web history sync, automatic browser login and themes.",
   "author": "Xinxing Rao <xinxingrao@gmail.com>",
   "license": "MIT",
   "homepage": "https://github.com/Enkrid-Rao/deepdock#readme",
