@@ -1,0 +1,515 @@
+import { useMemo, useState } from 'react'
+import {
+  ChevronDown,
+  CloudDownload,
+  FolderPlus,
+  Moon,
+  MoreHorizontal,
+  Palette,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+  Search,
+  Sun,
+  Trash2,
+  FolderInput,
+  X,
+  LogOut,
+  RefreshCw,
+  PlugZap,
+} from 'lucide-react'
+import { Menu } from './ui'
+import { Mark } from './ui'
+import { displayName, initials } from '../lib/format'
+import { projectColor, type ConversationMeta, type Project, type User } from '../lib/types'
+
+const UNGROUPED = '__ungrouped__'
+const COLLAPSE_KEY = 'deepdock:collapsed'
+
+function loadCollapsed(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY)
+    if (raw) return new Set(JSON.parse(raw))
+  } catch {
+    /* ignore */
+  }
+  return new Set()
+}
+
+type Actions = {
+  newChat: (projectId?: string | null) => void
+  select: (id: string) => void
+  newProject: () => void
+  renameProject: (project: Project) => void
+  deleteProject: (project: Project) => void
+  renameConversation: (conv: ConversationMeta) => void
+  moveConversation: (conv: ConversationMeta) => void
+  deleteConversation: (conv: ConversationMeta) => void
+  pinConversation: (conv: ConversationMeta) => void
+  account: (action: 'refresh' | 'reconnect' | 'disconnect' | 'dataFolder') => void
+  sync: () => void
+  appearance: () => void
+}
+
+export function Sidebar({
+  projects,
+  conversations,
+  activeId,
+  user,
+  dark,
+  savedAt,
+  credentialSource,
+  query,
+  onQuery,
+  onToggleTheme,
+  onOpenPalette,
+  desktop = false,
+  actions,
+}: {
+  projects: Project[]
+  conversations: ConversationMeta[]
+  activeId: string | null
+  user: User | null
+  dark: boolean
+  savedAt?: number | null
+  credentialSource?: string | null
+  query: string
+  onQuery: (value: string) => void
+  onToggleTheme: () => void
+  onOpenPalette: () => void
+  desktop?: boolean
+  actions: Actions
+}) {  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed)
+
+  const toggle = (id: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      try {
+        localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...next]))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return conversations
+    return conversations.filter(
+      (c) => c.title.toLowerCase().includes(q) || (c.preview || '').toLowerCase().includes(q),
+    )
+  }, [conversations, query])
+
+  const byProject = useMemo(() => {
+    const map = new Map<string, ConversationMeta[]>()
+    for (const conv of filtered) {
+      const key = conv.projectId || UNGROUPED
+      const list = map.get(key)
+      if (list) list.push(conv)
+      else map.set(key, [conv])
+    }
+    return map
+  }, [filtered])
+
+  const ungrouped = byProject.get(UNGROUPED) || []
+  const searching = query.trim().length > 0
+  const loginAge = savedAt ? Math.max(0, Math.floor((Date.now() - savedAt) / 86_400_000)) : null
+
+  const convRow = (conv: ConversationMeta, showProject: boolean) => {
+    const project = showProject ? projects.find((p) => p.id === conv.projectId) : null
+    return (
+      <div
+        key={conv.id}
+        className="conv-row"
+        role="button"
+        tabIndex={0}
+        aria-current={conv.id === activeId}
+        onClick={() => actions.select(conv.id)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            actions.select(conv.id)
+          }
+        }}
+      >
+        {conv.pinned ? <Pin size={11} style={{ flex: 'none', color: 'var(--accent)' }} /> : null}
+        <span className="conv-title">{conv.title || '新对话'}</span>
+        {project ? (
+          <span
+            className="count"
+            style={{ fontSize: 10, color: 'var(--faint)', flex: 'none', maxWidth: 70, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
+            {project.name}
+          </span>
+        ) : null}
+        <Menu
+          align="right"
+          width={196}
+          trigger={({ onClick, open }) => (
+            <button
+              type="button"
+              className="icon-btn row-more"
+              data-open={open}
+              onClick={onClick}
+              title="更多"
+            >
+              <MoreHorizontal size={14} />
+            </button>
+          )}
+        >
+          {(close) => (
+            <>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  close()
+                  actions.renameConversation(conv)
+                }}
+              >
+                <Pencil size={14} /> 重命名
+              </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  close()
+                  actions.pinConversation(conv)
+                }}
+              >
+                {conv.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                {conv.pinned ? '取消置顶' : '置顶'}
+              </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  close()
+                  actions.moveConversation(conv)
+                }}
+              >
+                <FolderInput size={14} /> 移动到项目
+              </button>
+              <div className="menu-sep" />
+              <button
+                type="button"
+                className="menu-item danger"
+                onClick={() => {
+                  close()
+                  actions.deleteConversation(conv)
+                }}
+              >
+                <Trash2 size={14} /> 删除对话
+              </button>
+            </>
+          )}
+        </Menu>
+      </div>
+    )
+  }
+
+  const group = (
+    key: string,
+    name: string,
+    dotColor: string | null,
+    items: ConversationMeta[],
+    project?: Project,
+  ) => {
+    const open = searching || !collapsed.has(key) || items.some((c) => c.id === activeId)
+    return (
+      <div className="project-group" key={key}>
+        <div
+          className="project-row"
+          data-open={open}
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            if (searching) return
+            toggle(key)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              if (!searching) toggle(key)
+            }
+          }}
+          title={project ? project.name : name}
+        >
+          <ChevronDown size={13} className="caret" />
+          {dotColor ? (
+            <span className="dot" style={{ background: dotColor, color: dotColor }} />
+          ) : (
+            <span className="dot" style={{ background: 'var(--line-strong)', color: 'var(--line-strong)' }} />
+          )}
+          <span className="name">{name}</span>
+          {items.length ? <span className="count">{items.length}</span> : null}
+          {project ? (
+            <Menu
+              align="right"
+              width={190}
+              trigger={({ onClick, open: isOpen }) => (
+                <button
+                  type="button"
+                  className="icon-btn row-more"
+                  data-open={isOpen}
+                  onClick={onClick}
+                  title="项目操作"
+                >
+                  <MoreHorizontal size={14} />
+                </button>
+              )}
+            >
+              {(close) => (
+                <>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => {
+                      close()
+                      actions.newChat(project.id)
+                    }}
+                  >
+                    <Plus size={14} /> 在此项目新建对话
+                  </button>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => {
+                      close()
+                      actions.renameProject(project)
+                    }}
+                  >
+                    <Pencil size={14} /> 重命名项目
+                  </button>
+                  <div className="menu-sep" />
+                  <button
+                    type="button"
+                    className="menu-item danger"
+                    onClick={() => {
+                      close()
+                      actions.deleteProject(project)
+                    }}
+                  >
+                    <Trash2 size={14} /> 删除项目
+                  </button>
+                </>
+              )}
+            </Menu>
+          ) : null}
+        </div>
+        <div className="conv-list" data-open={open}>
+          <div>
+            <div className="conv-inner">
+              {items.length ? (
+                items.map((conv) => convRow(conv, searching))
+              ) : (
+                <div className="conv-empty">{searching ? '没有匹配的对话' : '还没有对话'}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <aside className="sidebar">
+      <div className="brand">
+        <div className="brand-mark">
+          <Mark size={17} />
+        </div>
+        <div className="brand-text">
+          <span className="brand-name">deepdock</span>
+          <span className="brand-sub">深坞 · DeepSeek</span>
+        </div>
+      </div>
+
+      <button type="button" className="new-chat" onClick={() => actions.newChat(null)}>
+        <Plus size={15} />
+        <span className="new-chat-label">新对话</span>
+        <kbd>Ctrl N</kbd>
+      </button>
+
+      <div className="search-box">
+        <Search size={13} />
+        <input
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          placeholder="搜索对话"
+          aria-label="搜索对话"
+        />
+        {query ? (
+          <button type="button" className="icon-btn tiny" onClick={() => onQuery('')} title="清空">
+            <X size={12} />
+          </button>
+        ) : (
+          <span className="search-kbd" onClick={onOpenPalette} title="打开全局搜索">
+            Ctrl K
+          </span>
+        )}
+      </div>
+
+      <div className="nav">
+        <div className="section-head">
+          <span>项目</span>
+          <span className="section-count">{projects.length || ''}</span>
+          <button
+            type="button"
+            className="icon-btn tiny"
+            onClick={actions.newProject}
+            title="新建项目"
+            style={{ marginLeft: 2 }}
+          >
+            <FolderPlus size={14} />
+          </button>
+        </div>
+
+        {searching ? (
+          <div className="project-group">
+            <div className="conv-inner" style={{ margin: '2px 0 6px', borderLeft: 0, paddingLeft: 0 }}>
+              {filtered.length ? (
+                filtered.map((conv) => convRow(conv, true))
+              ) : (
+                <div className="conv-empty">没有找到「{query}」</div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            {projects.map((project) =>
+              group(
+                project.id,
+                project.name,
+                projectColor(project.color),
+                byProject.get(project.id) || [],
+                project,
+              ),
+            )}
+            {ungrouped.length
+              ? group(UNGROUPED, '未分组', null, ungrouped)
+              : null}
+            {!projects.length && !conversations.length ? (
+              <div className="conv-empty" style={{ padding: '10px 8px', lineHeight: 1.6 }}>
+                先建一个项目，把对话分门别类收好。
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
+
+      <div className="sidebar-foot">
+        <Menu
+          align="left"
+          width={224}
+          trigger={({ onClick, open }) => (
+            <button type="button" className="account" onClick={onClick} data-open={open}>
+              <span className="avatar">{initials(user)}</span>
+              <span className="account-name">{displayName(user)}</span>
+              <span className="status-dot" />
+            </button>
+          )}
+        >
+          {(close) => (
+            <>
+              <div className="menu-label account-name-label">{displayName(user)}</div>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  close()
+                  actions.sync()
+                }}
+              >
+                <CloudDownload size={14} /> 从网页同步对话
+              </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  close()
+                  actions.appearance()
+                }}
+              >
+                <Palette size={14} /> 外观与主题
+              </button>
+              <div className="menu-sep" />
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  close()
+                  actions.account('refresh')
+                }}
+              >
+                <RefreshCw size={14} /> 刷新账号信息
+              </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={() => {
+                  close()
+                  actions.account('reconnect')
+                }}
+              >
+                <PlugZap size={14} /> 重新连接
+              </button>
+              <div className="menu-sep" />
+              {desktop ? (
+                <button
+                  type="button"
+                  className="menu-item"
+                  onClick={() => {
+                    close()
+                    actions.account('dataFolder')
+                  }}
+                >
+                  <FolderInput size={14} /> 打开数据目录
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="menu-item danger"
+                onClick={() => {
+                  close()
+                  actions.account('disconnect')
+                }}
+              >
+                <LogOut size={14} /> 断开连接
+              </button>
+              <div className="menu-label account-status">
+                {loginAge === null
+                  ? '登录会自动保持'
+                  : loginAge === 0
+                    ? '今天已自动登录'
+                    : `已保持登录 ${loginAge} 天`}
+                {credentialSource ? <span>{credentialSource}</span> : null}
+              </div>
+            </>
+          )}
+        </Menu>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={actions.appearance}
+          title="外观与主题"
+        >
+          <Palette size={15} />
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={onToggleTheme}
+          title={dark ? '切换到浅色' : '切换到深色'}
+        >
+          {dark ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
+      </div>
+    </aside>
+  )
+}
+
+export { UNGROUPED }

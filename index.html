@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DeepDock · 深坞</title>
+    <meta name="description" content="DeepDock — a quiet front-end for DeepSeek chat, with projects." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script>
+      ;(function () {
+        try {
+          var raw = localStorage.getItem('deepdock:appearance')
+          var saved = raw ? JSON.parse(raw) : null
+          var mode = saved && saved.mode ? saved.mode : localStorage.getItem('deepdock:theme') || 'system'
+          var dark =
+            mode === 'dark' ||
+            (mode !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          var root = document.documentElement
+          root.dataset.theme = dark ? 'dark' : 'light'
+          root.dataset.lightPalette = (saved && saved.lightPalette) || 'paper'
+          root.dataset.darkPalette = (saved && saved.darkPalette) || 'noir'
+          root.dataset.accent = (saved && saved.accent) || 'emerald'
+          root.dataset.serif = saved && saved.serif === false ? 'off' : 'on'
+          root.dataset.grain = saved && saved.grain === false ? 'off' : 'on'
+          root.dataset.motion = saved && saved.motion === 'reduced' ? 'reduced' : 'full'
+          root.style.colorScheme = dark ? 'dark' : 'light'
+        } catch (e) {}
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

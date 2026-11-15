@@ -1,0 +1,112 @@
+{
+  "name": "deepdock",
+  "productName": "DeepDock",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "description": "DeepDock — a quiet, local Windows desktop front-end for DeepSeek web chat, with nested projects, project memory, web history sync and themes.",
+  "author": "Xinxing Rao <xinxingrao@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/Enkrid-Rao/deepdock#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Enkrid-Rao/deepdock.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Enkrid-Rao/deepdock/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "electron",
+    "desktop",
+    "chat",
+    "windows"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c auto \"node server/index.js\" \"vite\"",
+    "dev:api": "node server/index.js",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "desktop": "electron .",
+    "icon": "node scripts/make-icon.mjs",
+    "package": "node scripts/package.mjs",
+    "installer": "npm run build && electron-builder --win",
+    "typecheck": "tsc --noEmit",
+    "fonts": "node scripts/fetch-fonts.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.6",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "clsx": "^2.1.1",
+    "concurrently": "^9.1.2",
+    "electron": "^33.3.1",
+    "electron-builder": "^26.18.0",
+    "katex": "^0.16.19",
+    "lucide-react": "^0.469.0",
+    "playwright-core": "^1.49.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.0.0",
+    "rehype-highlight": "^7.0.1",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.0",
+    "remark-math": "^6.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  },
+  "build": {
+    "appId": "com.deepdock.app",
+    "productName": "DeepDock",
+    "copyright": "Copyright © 2026 Xinxing Rao",
+    "asar": false,
+    "npmRebuild": false,
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release/builder"
+    },
+    "files": [
+      "electron/**/*",
+      "server/**/*",
+      "dist/**/*",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "artifactName": "DeepDock-${version}-win-${arch}.${ext}",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DeepDock",
+      "artifactName": "DeepDock-Setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

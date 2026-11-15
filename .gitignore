@@ -1,0 +1,8 @@
+node_modules
+dist
+data
+release
+*.log
+.DS_Store
+.vite
+desktop-shot.png
