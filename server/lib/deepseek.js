@@ -3,7 +3,8 @@
 
 import * as pow from './pow.js'
 
-const BASE = 'https://chat.deepseek.com/api/v0'
+const ORIGIN = 'https://chat.deepseek.com'
+const BASE = `${ORIGIN}/api/v0`
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36'
 
@@ -169,7 +170,9 @@ export class DeepSeek {
       action: null,
       preempt: false,
     }
-    const res = await fetch(BASE + targetPath, {
+    // `targetPath` already includes `/api/v0`, so this must hit the origin
+    // directly — BASE + targetPath would double the prefix and get the SPA HTML.
+    const res = await fetch(ORIGIN + targetPath, {
       method: 'POST',
       headers: this.headers({ extra: { 'x-ds-pow-response': powHeader } }),
       body: JSON.stringify(payload),
@@ -179,6 +182,9 @@ export class DeepSeek {
     const ctype = res.headers.get('content-type') || ''
     if (!ctype.includes('text/event-stream')) {
       const text = await res.text()
+      console.warn(
+        `[deepseek] completion rejected status=${res.status} content-type=${ctype || '(none)'}`,
+      )
       let json = null
       try {
         json = JSON.parse(text)
@@ -193,6 +199,12 @@ export class DeepSeek {
         return this.completion(
           { sessionId, parentMessageId, prompt, thinking, search, signal },
           { retry: false },
+        )
+      }
+      if (!json) {
+        throw new DeepSeekError(
+          `DeepSeek 返回了网页而不是对话流（HTTP ${res.status}），可能是接口变更或临时风控，请稍后再试。`,
+          { code: 'bad_response', status: res.status, raw: text.slice(0, 300) },
         )
       }
       throw new DeepSeekError(
@@ -224,21 +236,35 @@ function mapBizMessage(bizCode, bizMsg) {
  *   { type: 'reasoning', delta }
  *   { type: 'content', delta }
  *   { type: 'finish' }
+ *
+ * DeepSeek streams both incremental appends (which omit the fragment type) and
+ * periodic full `fragments` snapshots. We keep a small fragment state so the
+ * THINK / RESPONSE classification stays correct and snapshots never duplicate
+ * text that was already emitted.
  */
 export async function* readCompletionStream(response, signal) {
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
-  let messageId = null
+  const state = { messageId: null, fragments: new Map(), currentId: null, currentKind: null }
 
   for await (const chunk of response.body) {
     if (signal?.aborted) break
     buffer += decoder.decode(chunk, { stream: true })
 
     let nl
+    let eventName = 'message'
     while ((nl = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, nl).replace(/\r$/, '')
       buffer = buffer.slice(nl + 1)
-      if (!line || line.startsWith(':')) continue
+      if (!line) {
+        eventName = 'message'
+        continue
+      }
+      if (line.startsWith(':')) continue
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim() || 'message'
+        continue
+      }
       if (!line.startsWith('data:')) continue
       const payload = line.slice(5).trim()
       if (!payload || payload === '[DONE]') continue
@@ -248,73 +274,130 @@ export async function* readCompletionStream(response, signal) {
       } catch {
         continue
       }
-      for (const out of interpretEvent(evt, (id) => (messageId = id))) {
-        if (out.type === 'meta' && out.messageId) messageId = out.messageId
-        yield out
-      }
+      yield* interpretEvent(evt, state, eventName)
     }
   }
-  if (messageId) yield { type: 'meta', messageId, late: true }
+  if (state.messageId) yield { type: 'meta', messageId: state.messageId, late: true }
 }
 
-function* interpretEvent(evt, rememberId) {
+function fragmentKind(type) {
+  const kind = String(type || '').toUpperCase()
+  if (kind.includes('THINK') || kind.includes('REASON')) return 'reasoning'
+  if (!kind || kind === 'TEXT' || kind === 'ANSWER' || kind.includes('RESPONSE')) return 'content'
+  return null
+}
+
+function* applySnapshot(fragments, state) {
+  let lastId = null
+  let lastKind = null
+  for (const fragment of fragments) {
+    if (!fragment) continue
+    const id = fragment.id ?? `fragment-${lastId ?? fragments.length}`
+    const kind = fragmentKind(fragment.type)
+    lastId = id
+    lastKind = kind
+
+    if (!kind || fragment.hidden) continue
+    const text = typeof fragment.content === 'string' ? fragment.content : ''
+    const previous = state.fragments.get(id)?.content || ''
+    let delta = ''
+    if (text.startsWith(previous)) delta = text.slice(previous.length)
+    // A final snapshot may be a cleaned-up rewrite of what was streamed
+    // (e.g. "1+1 等于 2。" → "1加1等于2"). Keep the streamed text rather than
+    // appending the rewrite a second time.
+    state.fragments.set(id, { kind, content: text })
+    if (delta) yield { type: kind, delta }
+  }
+  if (lastId !== null) {
+    state.currentId = lastId
+    state.currentKind = lastKind
+  }
+}
+
+function* interpretEvent(evt, state, eventName = 'message') {
   if (!evt || typeof evt !== 'object') return
 
-  if (evt.type === 'error') {
+  // The title event carries a generated conversation title, not answer text.
+  if (eventName === 'title') return
+  if (eventName === 'ready' || eventName === 'update_session' || eventName === 'close') return
+
+  if (eventName === 'error' || evt.type === 'error') {
     yield { type: 'error', message: evt.content || evt.message || 'DeepSeek 返回错误' }
     return
   }
 
-  // Token-usage heartbeat.
+  // Token-usage heartbeat / finish markers.
   if (evt.o === 'BATCH') return
-  if (evt.o === 'SET' && evt.v === 'FINISHED') {
-    yield { type: 'finish' }
-    return
-  }
-  if (evt.p === 'status' && evt.v === 'FINISHED') {
+  if ((evt.o === 'SET' && evt.v === 'FINISHED') || (evt.p === 'status' && evt.v === 'FINISHED')) {
     yield { type: 'finish' }
     return
   }
 
   const v = evt.v
-  if (typeof v === 'string') {
-    if (!v) return
-    if (typeof evt.p === 'string' && /think/i.test(evt.p)) {
-      yield { type: 'reasoning', delta: v }
-    } else {
-      yield { type: 'content', delta: v }
-    }
+  const path = typeof evt.p === 'string' ? evt.p : ''
+
+  if (Array.isArray(v)) {
+    // Full fragment list for the current response.
+    yield* applySnapshot(v, state)
     return
   }
 
   if (v && typeof v === 'object') {
     const response = v.response || v
     const id = response?.message_id || v.message_id
-    if (id) {
-      rememberId(id)
+    if (id && id !== state.messageId) {
+      state.messageId = id
       yield { type: 'meta', messageId: id }
     }
-    const thinking = response?.thinking_content
-    if (typeof thinking === 'string' && thinking) {
-      yield { type: 'reasoning', delta: thinking }
-    }
-    const fragments = response?.fragments
-    if (Array.isArray(fragments)) {
-      for (const fragment of fragments) {
-        const text = fragment?.content
-        if (typeof text !== 'string' || !text) continue
-        const kind = String(fragment.type || '').toUpperCase()
-        if (kind.includes('THINK') || kind.includes('REASON')) {
-          yield { type: 'reasoning', delta: text }
-        } else if (!fragment.hidden) {
-          yield { type: 'content', delta: text }
-        }
-      }
+    if (Array.isArray(response?.fragments)) {
+      yield* applySnapshot(response.fragments, state)
+    } else if (typeof response?.thinking_content === 'string' && response.thinking_content) {
+      yield { type: 'reasoning', delta: response.thinking_content }
     }
     return
   }
 
-  if (typeof evt.content === 'string' && evt.content) {
-    yield { type: 'content', delta: evt.content }
+  if (typeof v === 'string' && v) {
+    const fragmentMatch = path.match(/^response\/fragments\/([^/]+)\/content$/)
+    if (fragmentMatch) {
+      const id = fragmentMatch[1] === '-1' ? state.currentId : fragmentMatch[1]
+      if (id == null) return
+      const current = state.fragments.get(id) || { kind: state.currentKind, content: '' }
+      if (evt.o === 'SET') {
+        const previous = current.content
+        current.content = v
+        state.fragments.set(id, current)
+        const delta = v.startsWith(previous) ? v.slice(previous.length) : v
+        if (delta && (current.kind === 'reasoning' || current.kind === 'content')) {
+          yield { type: current.kind, delta }
+        }
+      } else {
+        current.content += v
+        state.fragments.set(id, current)
+        if (current.kind === 'reasoning' || current.kind === 'content') {
+          yield { type: current.kind, delta: v }
+        }
+      }
+      return
+    }
+
+    if (/think|reason/i.test(path)) {
+      yield { type: 'reasoning', delta: v }
+      return
+    }
+
+    // Appends without a path belong to the fragment that was last announced.
+    if (state.currentId != null) {
+      const current = state.fragments.get(state.currentId) || { kind: state.currentKind, content: '' }
+      current.content += v
+      state.fragments.set(state.currentId, current)
+      if (current.kind === 'reasoning' || current.kind === 'content') {
+        yield { type: current.kind, delta: v }
+      }
+      return
+    }
+
+    yield { type: 'content', delta: v }
+    return
   }
 }

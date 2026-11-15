@@ -16,7 +16,10 @@ let dataDir = null
 let serverPort = null
 
 app.setName('DeepDock')
-app.setPath('userData', path.join(app.getPath('appData'), 'DeepDock'))
+app.setPath(
+  'userData',
+  process.env.DEEPDOCK_USER_DATA || path.join(app.getPath('appData'), 'DeepDock'),
+)
 app.setAppUserModelId('com.deepdock.app')
 
 /* ------------------------------------------------------------------ state */

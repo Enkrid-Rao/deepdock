@@ -9,6 +9,7 @@ import { Store } from './lib/store.js'
 import { Credentials, normalizeCookie, normalizeToken } from './lib/credentials.js'
 import { DeepSeek, DeepSeekError, readCompletionStream } from './lib/deepseek.js'
 import { convertRemoteHistory, convertSessionPage } from './lib/remote-history.js'
+import { buildProjectMemoryPrompt } from './lib/project-memory.js'
 import * as pow from './lib/pow.js'
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
@@ -65,17 +66,21 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
 
   // ---------------------------------------------------------------- status
 
-  app.get('/api/bootstrap', (req, res) => {
-    res.json({
-      connected: credentials.connected,
-      user: publicUser(credentials.user),
-      projects: store.listProjects(),
-      conversations: sortedConversations(),
-      mock,
-      savedAt: credentials.value.savedAt || null,
-      credentialSource: credentials.value.source || null,
-    })
-  })
+  app.get(
+    '/api/bootstrap',
+    wrap(async (req, res) => {
+      await store.refreshMemoryMeta()
+      res.json({
+        connected: credentials.connected,
+        user: publicUser(credentials.user),
+        projects: store.listProjects(),
+        conversations: sortedConversations(),
+        mock,
+        savedAt: credentials.value.savedAt || null,
+        credentialSource: credentials.value.source || null,
+      })
+    }),
+  )
 
   app.get('/api/health', (req, res) =>
     res.json({ ok: true, mock, connected: credentials.connected }),
@@ -221,20 +226,35 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
   app.post(
     '/api/projects',
     wrap(async (req, res) => {
-      const project = await store.createProject({
-        name: req.body?.name,
-        color: req.body?.color,
-      })
-      res.json(project)
+      try {
+        const project = await store.createProject({
+          name: req.body?.name,
+          color: req.body?.color,
+          parentId: req.body?.parentId || null,
+        })
+        res.json(project)
+      } catch (err) {
+        if (err.code === 'INVALID_PARENT') {
+          return res.status(400).json({ error: 'INVALID_PARENT', message: err.message })
+        }
+        throw err
+      }
     }),
   )
 
   app.patch(
     '/api/projects/:id',
     wrap(async (req, res) => {
-      const project = await store.updateProject(req.params.id, req.body || {})
-      if (!project) return res.status(404).json({ error: 'NOT_FOUND' })
-      res.json(project)
+      try {
+        const project = await store.updateProject(req.params.id, req.body || {})
+        if (!project) return res.status(404).json({ error: 'NOT_FOUND' })
+        res.json(project)
+      } catch (err) {
+        if (err.code === 'INVALID_PARENT') {
+          return res.status(400).json({ error: 'INVALID_PARENT', message: err.message })
+        }
+        throw err
+      }
     }),
   )
 
@@ -243,7 +263,49 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
     wrap(async (req, res) => {
       const ok = await store.deleteProject(req.params.id)
       if (!ok) return res.status(404).json({ error: 'NOT_FOUND' })
-      res.json({ ok: true, conversations: sortedConversations() })
+      res.json({ ok: true, projects: store.listProjects(), conversations: sortedConversations() })
+    }),
+  )
+
+  app.get(
+    '/api/projects/:id/memory',
+    wrap(async (req, res) => {
+      const project = store.getProject(req.params.id)
+      if (!project) return res.status(404).json({ error: 'NOT_FOUND' })
+      const memory = await store.readProjectMemory(project.id)
+      if (
+        project.memoryEnabled &&
+        (memory.chars !== project.memoryChars ||
+          (memory.updatedAt || null) !== project.memoryUpdatedAt)
+      ) {
+        project.memoryChars = memory.chars
+        project.memoryUpdatedAt = memory.updatedAt || null
+        await store.saveIndex()
+      }
+      res.json({
+        projectId: project.id,
+        enabled: project.memoryEnabled,
+        includeSubprojects: project.includeSubprojects,
+        content: memory.content,
+        chars: memory.chars,
+        exists: memory.exists,
+        file: `project-memory/${project.id}.md`,
+        updatedAt: project.memoryUpdatedAt,
+      })
+    }),
+  )
+
+  app.put(
+    '/api/projects/:id/memory',
+    wrap(async (req, res) => {
+      const body = req.body || {}
+      const result = await store.saveProjectMemory(req.params.id, {
+        content: typeof body.content === 'string' ? body.content : '',
+        enabled: Boolean(body.enabled),
+        includeSubprojects: Boolean(body.includeSubprojects),
+      })
+      if (!result) return res.status(404).json({ error: 'NOT_FOUND' })
+      res.json({ project: result.project, memory: result.memory })
     }),
   )
 
@@ -323,6 +385,7 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
       let prompt = String(body.content || '').trim()
       let userMessage = null
       let parentOverride = null
+      let memory = null
 
       const existing = await store.getConversation(convId)
 
@@ -344,7 +407,20 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
         parentOverride = previousAssistant?.dsMessageId || null
       } else {
         if (!prompt) return res.status(400).json({ error: 'EMPTY_PROMPT' })
-        userMessage = await store.addMessage(convId, { role: 'user', content: prompt })
+        // Project memory is a first-message prompt prefix, never part of the
+        // typed content. The UI only renders a reference chip.
+        if (!existing.messages.length) {
+          try {
+            memory = await buildProjectMemoryPrompt(store, meta.projectId)
+          } catch (err) {
+            console.warn('[deepdock] project memory unavailable:', err.message)
+          }
+        }
+        userMessage = await store.addMessage(convId, {
+          role: 'user',
+          content: prompt,
+          ...(memory?.refs?.length ? { memoryRefs: memory.refs } : {}),
+        })
         if (meta.messageCount <= 1 && (!meta.title || meta.title === '新对话')) {
           await store.updateConversation(convId, { title: titleFrom(prompt) })
         }
@@ -353,6 +429,8 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
           parentOverride = previousAssistant?.dsMessageId || null
         }
       }
+
+      const upstreamPrompt = memory ? `${memory.text}${prompt}` : prompt
 
       const assistant = await store.addMessage(convId, {
         role: 'assistant',
@@ -418,7 +496,7 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
           const response = await deepseek.completion({
             sessionId: meta.dsSessionId,
             parentMessageId: parentOverride ?? meta.parentMessageId,
-            prompt,
+            prompt: upstreamPrompt,
             thinking,
             search,
             signal: controller.signal,

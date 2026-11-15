@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import {
   ChevronDown,
   CloudDownload,
+  FileText,
   FolderPlus,
   Moon,
   MoreHorizontal,
@@ -40,7 +41,9 @@ function loadCollapsed(): Set<string> {
 type Actions = {
   newChat: (projectId?: string | null) => void
   select: (id: string) => void
-  newProject: () => void
+  newProject: (parentId?: string | null) => void
+  newSubproject: (project: Project) => void
+  editMemory: (project: Project) => void
   renameProject: (project: Project) => void
   deleteProject: (project: Project) => void
   renameConversation: (conv: ConversationMeta) => void
@@ -96,6 +99,20 @@ export function Sidebar({
     })
   }
 
+  const expand = (id: string) => {
+    setCollapsed((prev) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      try {
+        localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...next]))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return conversations
@@ -118,6 +135,27 @@ export function Sidebar({
   const ungrouped = byProject.get(UNGROUPED) || []
   const searching = query.trim().length > 0
   const loginAge = savedAt ? Math.max(0, Math.floor((Date.now() - savedAt) / 86_400_000)) : null
+
+  const projectChildren = useMemo(() => {
+    const map = new Map<string | null, Project[]>()
+    const ids = new Set(projects.map((project) => project.id))
+    for (const project of projects) {
+      const parentId = project.parentId && ids.has(project.parentId) ? project.parentId : null
+      const list = map.get(parentId)
+      if (list) list.push(project)
+      else map.set(parentId, [project])
+    }
+    return map
+  }, [projects])
+
+  const roots = projectChildren.get(null) || []
+
+  const hasActiveInProject = (projectId: string, seen = new Set<string>()): boolean => {
+    if (seen.has(projectId)) return false
+    seen.add(projectId)
+    if ((byProject.get(projectId) || []).some((conv) => conv.id === activeId)) return true
+    return (projectChildren.get(projectId) || []).some((child) => hasActiveInProject(child.id, seen))
+  }
 
   const convRow = (conv: ConversationMeta, showProject: boolean) => {
     const project = showProject ? projects.find((p) => p.id === conv.projectId) : null
@@ -212,21 +250,30 @@ export function Sidebar({
     )
   }
 
-  const group = (
-    key: string,
-    name: string,
-    dotColor: string | null,
-    items: ConversationMeta[],
-    project?: Project,
-  ) => {
-    const open = searching || !collapsed.has(key) || items.some((c) => c.id === activeId)
+  const convList = (items: ConversationMeta[], depth: number) => (
+    <div className="conv-inner" style={{ marginLeft: 14 + depth * 16 }}>
+      {items.length ? (
+        items.map((conv) => convRow(conv, searching))
+      ) : (
+        <div className="conv-empty">还没有对话</div>
+      )}
+    </div>
+  )
+
+  const renderProject = (project: Project, depth: number) => {
+    const key = project.id
+    const items = byProject.get(key) || []
+    const children = projectChildren.get(key) || []
+    const open = searching || !collapsed.has(key) || hasActiveInProject(key)
+
     return (
-      <div className="project-group" key={key}>
+      <div className="project-group" key={key} data-depth={depth}>
         <div
           className="project-row"
           data-open={open}
           role="button"
           tabIndex={0}
+          style={{ paddingLeft: 7 + depth * 16 }}
           onClick={() => {
             if (searching) return
             toggle(key)
@@ -237,80 +284,149 @@ export function Sidebar({
               if (!searching) toggle(key)
             }
           }}
-          title={project ? project.name : name}
+          title={project.name}
         >
           <ChevronDown size={13} className="caret" />
-          {dotColor ? (
-            <span className="dot" style={{ background: dotColor, color: dotColor }} />
-          ) : (
-            <span className="dot" style={{ background: 'var(--line-strong)', color: 'var(--line-strong)' }} />
-          )}
-          <span className="name">{name}</span>
+          <span
+            className="dot"
+            style={{ background: projectColor(project.color), color: projectColor(project.color) }}
+          />
+          <span className="name">{project.name}</span>
+          {project.memoryEnabled && project.memoryChars > 0 ? (
+            <button
+              type="button"
+              className="memory-mark"
+              title="查看 / 编辑项目记忆"
+              onClick={(event) => {
+                event.stopPropagation()
+                actions.editMemory(project)
+              }}
+            >
+              <FileText size={11} />
+            </button>
+          ) : null}
           {items.length ? <span className="count">{items.length}</span> : null}
-          {project ? (
-            <Menu
-              align="right"
-              width={190}
-              trigger={({ onClick, open: isOpen }) => (
+          <Menu
+            align="right"
+            width={208}
+            trigger={({ onClick, open: isOpen }) => (
+              <button
+                type="button"
+                className="icon-btn row-more"
+                data-open={isOpen}
+                onClick={onClick}
+                title="项目操作"
+              >
+                <MoreHorizontal size={14} />
+              </button>
+            )}
+          >
+            {(close) => (
+              <>
                 <button
                   type="button"
-                  className="icon-btn row-more"
-                  data-open={isOpen}
-                  onClick={onClick}
-                  title="项目操作"
+                  className="menu-item"
+                  onClick={() => {
+                    close()
+                    actions.newChat(project.id)
+                  }}
                 >
-                  <MoreHorizontal size={14} />
+                  <Plus size={14} /> 在此项目新建对话
                 </button>
-              )}
-            >
-              {(close) => (
-                <>
-                  <button
-                    type="button"
-                    className="menu-item"
-                    onClick={() => {
-                      close()
-                      actions.newChat(project.id)
-                    }}
-                  >
-                    <Plus size={14} /> 在此项目新建对话
-                  </button>
-                  <button
-                    type="button"
-                    className="menu-item"
-                    onClick={() => {
-                      close()
-                      actions.renameProject(project)
-                    }}
-                  >
-                    <Pencil size={14} /> 重命名项目
-                  </button>
-                  <div className="menu-sep" />
-                  <button
-                    type="button"
-                    className="menu-item danger"
-                    onClick={() => {
-                      close()
-                      actions.deleteProject(project)
-                    }}
-                  >
-                    <Trash2 size={14} /> 删除项目
-                  </button>
-                </>
-              )}
-            </Menu>
-          ) : null}
+                <button
+                  type="button"
+                  className="menu-item"
+                  onClick={() => {
+                    close()
+                    expand(project.id)
+                    actions.newSubproject(project)
+                  }}
+                >
+                  <FolderPlus size={14} /> 新建子项目
+                </button>
+                <button
+                  type="button"
+                  className="menu-item"
+                  onClick={() => {
+                    close()
+                    actions.editMemory(project)
+                  }}
+                >
+                  <FileText size={14} /> 项目记忆…
+                  {project.memoryEnabled ? (
+                    <span className="menu-trailing">{project.memoryChars ? '已启用' : '空'}</span>
+                  ) : null}
+                </button>
+                <div className="menu-sep" />
+                <button
+                  type="button"
+                  className="menu-item"
+                  onClick={() => {
+                    close()
+                    actions.renameProject(project)
+                  }}
+                >
+                  <Pencil size={14} /> 重命名 / 移动
+                </button>
+                <button
+                  type="button"
+                  className="menu-item danger"
+                  onClick={() => {
+                    close()
+                    actions.deleteProject(project)
+                  }}
+                >
+                  <Trash2 size={14} /> 删除项目
+                </button>
+              </>
+            )}
+          </Menu>
         </div>
         <div className="conv-list" data-open={open}>
           <div>
-            <div className="conv-inner">
-              {items.length ? (
-                items.map((conv) => convRow(conv, searching))
-              ) : (
-                <div className="conv-empty">{searching ? '没有匹配的对话' : '还没有对话'}</div>
-              )}
-            </div>
+            {items.length ? convList(items, depth) : children.length ? null : convList([], depth)}
+            {children.length ? (
+              <div className="project-children">
+                {children.map((child) => renderProject(child, depth + 1))}
+              </div>
+            ) : null}
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  const renderUngrouped = () => {
+    const open = searching || !collapsed.has(UNGROUPED) || ungrouped.some((conv) => conv.id === activeId)
+    return (
+      <div className="project-group" key={UNGROUPED}>
+        <div
+          className="project-row"
+          data-open={open}
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            if (searching) return
+            toggle(UNGROUPED)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              if (!searching) toggle(UNGROUPED)
+            }
+          }}
+          title="未分组"
+        >
+          <ChevronDown size={13} className="caret" />
+          <span
+            className="dot"
+            style={{ background: 'var(--line-strong)', color: 'var(--line-strong)' }}
+          />
+          <span className="name">未分组</span>
+          <span className="count">{ungrouped.length}</span>
+        </div>
+        <div className="conv-list" data-open={open}>
+          <div>{convList(ungrouped, 0)}</div>
         </div>
       </div>
     )
@@ -360,7 +476,7 @@ export function Sidebar({
           <button
             type="button"
             className="icon-btn tiny"
-            onClick={actions.newProject}
+            onClick={() => actions.newProject(null)}
             title="新建项目"
             style={{ marginLeft: 2 }}
           >
@@ -380,18 +496,8 @@ export function Sidebar({
           </div>
         ) : (
           <>
-            {projects.map((project) =>
-              group(
-                project.id,
-                project.name,
-                projectColor(project.color),
-                byProject.get(project.id) || [],
-                project,
-              ),
-            )}
-            {ungrouped.length
-              ? group(UNGROUPED, '未分组', null, ungrouped)
-              : null}
+            {roots.map((project) => renderProject(project, 0))}
+            {ungrouped.length ? renderUngrouped() : null}
             {!projects.length && !conversations.length ? (
               <div className="conv-empty" style={{ padding: '10px 8px', lineHeight: 1.6 }}>
                 先建一个项目，把对话分门别类收好。

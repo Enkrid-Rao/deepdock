@@ -3031,6 +3031,279 @@ kbd {
   opacity: 0.85;
 }
 
+/* ------------------------------------------------------- projects & memory */
+
+.project-children {
+  position: relative;
+}
+
+.project-row .memory-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 2px;
+  border-radius: 5px;
+  color: var(--accent);
+  opacity: 0.8;
+  transition: background 140ms var(--ease), opacity 140ms var(--ease);
+}
+
+.project-row .memory-mark:hover {
+  background: var(--hover);
+  opacity: 1;
+}
+
+.project-row:hover .memory-mark {
+  opacity: 1;
+}
+
+.menu-trailing {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.project-parent-field select,
+.field select {
+  width: 100%;
+  height: 38px;
+  margin-top: 2px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-sunken);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.project-parent-field select:focus,
+.field select:focus {
+  border-color: color-mix(in oklab, var(--accent) 44%, var(--line));
+  background: var(--surface);
+  box-shadow: 0 0 0 4px var(--accent-ring);
+  outline: none;
+}
+
+/* ------------------------------------------------------------- reference chip */
+
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--accent) 28%, transparent);
+  background: var(--accent-soft);
+  color: color-mix(in oklab, var(--accent) 82%, var(--ink));
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.ref-chip em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+button.ref-chip {
+  transition: border-color 140ms var(--ease), background 140ms var(--ease);
+}
+
+button.ref-chip:hover {
+  border-color: color-mix(in oklab, var(--accent) 50%, transparent);
+  background: color-mix(in oklab, var(--accent-soft) 70%, var(--surface));
+}
+
+.composer-refs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.ref-note {
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.msg-refs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0 2px 7px;
+}
+
+/* ------------------------------------------------------------- memory dialog */
+
+.dialog-memory {
+  display: flex;
+  flex-direction: column;
+  max-height: min(90vh, 860px);
+}
+
+.memory-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.memory-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-sunken);
+  text-align: left;
+  transition: background 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.memory-toggle:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+
+.memory-toggle[data-on='true'] {
+  background: var(--accent-soft);
+  border-color: color-mix(in oklab, var(--accent) 30%, transparent);
+}
+
+.memory-toggle:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.memory-toggle .toggle-track {
+  margin-top: 1px;
+}
+
+.memory-toggle[data-on='true'] .toggle-track {
+  background: var(--accent);
+}
+
+.memory-toggle[data-on='true'] .toggle-thumb {
+  transform: translateX(14px);
+  background: var(--accent-contrast);
+}
+
+.memory-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  color: var(--ink-2);
+  font-size: 12.6px;
+}
+
+.memory-toggle-text em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.memory-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.memory-note {
+  margin: -4px 0 12px;
+  padding: 0 2px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.memory-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.8px;
+}
+
+.memory-textarea {
+  width: 100%;
+  min-height: 140px;
+  max-height: 34vh;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-sunken);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  resize: vertical;
+  transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease), background 150ms var(--ease);
+}
+
+.memory-textarea:focus {
+  outline: none;
+  border-color: color-mix(in oklab, var(--accent) 44%, var(--line));
+  background: var(--surface);
+  box-shadow: 0 0 0 4px var(--accent-ring);
+}
+
+.memory-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.memory-foot [data-over='true'] {
+  color: var(--danger);
+}
+
+.memory-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.memory-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 22px 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.memory-save-hint {
+  margin-right: auto;
+  align-self: center;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.dialog-memory .dialog-actions {
+  flex: none;
+  margin-top: 12px;
+}
+
 /* --------------------------------------------------------------- mobile */
 
 @media (max-width: 900px) {

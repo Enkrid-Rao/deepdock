@@ -14,7 +14,7 @@ import {
 import { Composer } from './Composer'
 import { MessageView } from './Message'
 import { Menu, WaveArt } from './ui'
-import { projectColor, type Conversation, type Message, type Project } from '../lib/types'
+import { projectColor, type Conversation, type MemoryRef, type Message, type Project } from '../lib/types'
 
 const QUICK_PROMPTS = [
   { icon: 'spark', text: '把这段代码改得更干净' },
@@ -44,6 +44,8 @@ export function ChatView({
   onSync,
   onSyncConversation,
   syncingConversation = false,
+  memoryRefs = [],
+  onOpenMemory,
 }: {
   conversation: Conversation | null
   projects: Project[]
@@ -65,6 +67,8 @@ export function ChatView({
   onSync: () => void
   onSyncConversation?: () => void
   syncingConversation?: boolean
+  memoryRefs?: MemoryRef[]
+  onOpenMemory?: (projectId: string) => void
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
@@ -327,6 +331,8 @@ export function ChatView({
         search={search}
         onToggleThinking={onToggleThinking}
         onToggleSearch={onToggleSearch}
+        memoryRefs={memoryRefs}
+        onOpenMemory={onOpenMemory}
       />
     </main>
   )

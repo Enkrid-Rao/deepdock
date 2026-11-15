@@ -3,6 +3,22 @@ export type Project = {
   name: string
   color: string
   createdAt: number
+  parentId: string | null
+  memoryEnabled: boolean
+  includeSubprojects: boolean
+  memoryChars: number
+  memoryUpdatedAt: number | null
+}
+
+export type ProjectMemory = {
+  projectId: string
+  enabled: boolean
+  includeSubprojects: boolean
+  content: string
+  chars: number
+  exists: boolean
+  file: string
+  updatedAt: number | null
 }
 
 export type ConversationMeta = {
@@ -20,6 +36,13 @@ export type ConversationMeta = {
 
 export type Role = 'user' | 'assistant'
 
+export type MemoryRef = {
+  projectId: string
+  name: string
+  chars: number
+  file?: string
+}
+
 export type Message = {
   id: string
   role: Role
@@ -32,6 +55,7 @@ export type Message = {
   thinking?: boolean
   search?: boolean
   imported?: boolean
+  memoryRefs?: MemoryRef[]
   dsMessageId?: string | null
 }
 

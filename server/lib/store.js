@@ -9,6 +9,13 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 const EMPTY_INDEX = { version: 1, projects: [], conversations: [] }
+const MAX_PROJECT_DEPTH = 8
+
+function invalidParent(message = 'INVALID_PARENT') {
+  const err = new Error(message)
+  err.code = 'INVALID_PARENT'
+  return err
+}
 
 async function readJson(file, fallback) {
   try {
@@ -34,6 +41,7 @@ export class Store {
   constructor(dir) {
     this.dir = dir
     this.convDir = path.join(dir, 'conversations')
+    this.memoryDir = path.join(dir, 'project-memory')
     this.indexFile = path.join(dir, 'index.json')
     this.index = structuredClone(EMPTY_INDEX)
     this.queue = Promise.resolve()
@@ -42,10 +50,37 @@ export class Store {
 
   async init() {
     await fs.mkdir(this.convDir, { recursive: true })
+    await fs.mkdir(this.memoryDir, { recursive: true })
     this.index = await readJson(this.indexFile, structuredClone(EMPTY_INDEX))
     this.index.projects ||= []
     this.index.conversations ||= []
+    this.normalizeProjects()
     return this
+  }
+
+  /** Migrate old indexes and make sure the project tree has no cycles. */
+  normalizeProjects() {
+    const byId = new Map(this.index.projects.map((project) => [project.id, project]))
+    for (const project of this.index.projects) {
+      if (project.parentId && !byId.has(project.parentId)) project.parentId = null
+      project.parentId ||= null
+      project.memoryEnabled = Boolean(project.memoryEnabled)
+      project.includeSubprojects = Boolean(project.includeSubprojects)
+      project.memoryChars = Number(project.memoryChars) || 0
+      project.memoryUpdatedAt = Number(project.memoryUpdatedAt) || null
+    }
+    for (const project of this.index.projects) {
+      const seen = new Set([project.id])
+      let current = project.parentId ? byId.get(project.parentId) : null
+      while (current) {
+        if (seen.has(current.id)) {
+          project.parentId = null
+          break
+        }
+        seen.add(current.id)
+        current = current.parentId ? byId.get(current.parentId) : null
+      }
+    }
   }
 
   /** Serialise all writes so concurrent requests can never interleave. */
@@ -69,12 +104,51 @@ export class Store {
     return this.index.projects
   }
 
-  async createProject({ name, color }) {
+  getProject(id) {
+    return this.index.projects.find((project) => project.id === id) || null
+  }
+
+  projectDepth(id) {
+    let depth = 0
+    let current = this.getProject(id)
+    let guard = 0
+    while (current?.parentId && guard < MAX_PROJECT_DEPTH + 2) {
+      depth += 1
+      current = this.getProject(current.parentId)
+      guard += 1
+    }
+    return depth
+  }
+
+  assertValidParent(id, parentId) {
+    if (!parentId) return
+    if (parentId === id) throw invalidParent('A project cannot be its own parent')
+    if (!this.getProject(parentId)) throw invalidParent('Parent project does not exist')
+    if (this.projectDepth(parentId) + 1 > MAX_PROJECT_DEPTH) {
+      throw invalidParent(`Project nesting is limited to ${MAX_PROJECT_DEPTH} levels`)
+    }
+    let current = this.getProject(parentId)
+    let guard = 0
+    while (current && guard < MAX_PROJECT_DEPTH + 2) {
+      if (current.id === id) throw invalidParent('A project cannot be moved into its own child')
+      current = current.parentId ? this.getProject(current.parentId) : null
+      guard += 1
+    }
+  }
+
+  async createProject({ name, color, parentId = null }) {
+    const parent = parentId ? this.getProject(parentId) : null
+    this.assertValidParent(null, parent ? parent.id : null)
     const project = {
       id: randomUUID(),
       name: (name || '未命名项目').trim(),
       color: color || 'sage',
       createdAt: Date.now(),
+      parentId: parent ? parent.id : null,
+      memoryEnabled: false,
+      includeSubprojects: false,
+      memoryChars: 0,
+      memoryUpdatedAt: null,
     }
     this.index.projects.push(project)
     await this.saveIndex()
@@ -82,23 +156,158 @@ export class Store {
   }
 
   async updateProject(id, patch) {
-    const project = this.index.projects.find((p) => p.id === id)
+    const project = this.getProject(id)
     if (!project) return null
     if (typeof patch.name === 'string' && patch.name.trim()) project.name = patch.name.trim()
     if (typeof patch.color === 'string') project.color = patch.color
+    if ('parentId' in patch) {
+      const parentId = patch.parentId ? String(patch.parentId) : null
+      this.assertValidParent(id, parentId)
+      project.parentId = parentId
+    }
+    if (typeof patch.includeSubprojects === 'boolean') {
+      project.includeSubprojects = patch.includeSubprojects
+    }
     await this.saveIndex()
     return project
   }
 
   async deleteProject(id) {
-    const before = this.index.projects.length
+    const project = this.getProject(id)
+    if (!project) return false
     this.index.projects = this.index.projects.filter((p) => p.id !== id)
-    if (this.index.projects.length === before) return false
+    // Children are promoted one level instead of being deleted with the parent.
+    for (const child of this.index.projects) {
+      if (child.parentId === id) child.parentId = project.parentId || null
+    }
     for (const conv of this.index.conversations) {
       if (conv.projectId === id) conv.projectId = null
     }
+    await fs.rm(this.memoryFile(id), { force: true }).catch(() => {})
     await this.saveIndex()
     return true
+  }
+
+  // ---------------------------------------------------------- project memory
+
+  memoryFile(id) {
+    return path.join(this.memoryDir, `${id}.md`)
+  }
+
+  async readProjectMemory(id) {
+    const file = this.memoryFile(id)
+    try {
+      const [content, stat] = await Promise.all([fs.readFile(file, 'utf8'), fs.stat(file)])
+      return { exists: true, content, chars: content.length, file, updatedAt: stat.mtimeMs }
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        return { exists: false, content: '', chars: 0, file, updatedAt: null }
+      }
+      throw err
+    }
+  }
+
+  async saveProjectMemory(id, { content = '', enabled = false, includeSubprojects = false } = {}) {
+    const project = this.getProject(id)
+    if (!project) return null
+    const text = String(content ?? '')
+    const file = this.memoryFile(id)
+    await fs.mkdir(this.memoryDir, { recursive: true })
+    if (text.length) await fs.writeFile(file, text, 'utf8')
+    else await fs.rm(file, { force: true })
+    project.memoryEnabled = Boolean(enabled)
+    project.includeSubprojects = Boolean(includeSubprojects)
+    project.memoryChars = text.length
+    project.memoryUpdatedAt = Date.now()
+    await this.saveIndex()
+    return {
+      project,
+      memory: {
+        projectId: id,
+        content: text,
+        chars: text.length,
+        enabled: project.memoryEnabled,
+        includeSubprojects: project.includeSubprojects,
+        file: `project-memory/${id}.md`,
+        updatedAt: project.memoryUpdatedAt,
+      },
+    }
+  }
+
+  async deleteProjectMemory(id) {
+    const project = this.getProject(id)
+    if (!project) return null
+    await fs.rm(this.memoryFile(id), { force: true }).catch(() => {})
+    project.memoryEnabled = false
+    project.memoryChars = 0
+    project.memoryUpdatedAt = Date.now()
+    await this.saveIndex()
+    return project
+  }
+
+  /**
+   * The memory files that apply to a conversation in `projectId`, ordered from
+   * the root project down to the conversation's own project.
+   *
+   * - the conversation's own project always applies;
+   * - an ancestor applies only when its `includeSubprojects` is on.
+   */
+  async resolveProjectMemory(projectId) {
+    if (!projectId) return []
+    let current = this.getProject(projectId)
+    if (!current) return []
+    const chain = []
+    let isSelf = true
+    let guard = 0
+    let metaChanged = false
+
+    while (current && guard < MAX_PROJECT_DEPTH + 2) {
+      if (current.memoryEnabled && (isSelf || current.includeSubprojects)) {
+        const memory = await this.readProjectMemory(current.id)
+        if (memory.chars !== current.memoryChars) {
+          current.memoryChars = memory.chars
+          metaChanged = true
+        }
+        if (memory.chars) {
+          chain.push({
+            project: current,
+            content: memory.content,
+            chars: memory.chars,
+            file: `project-memory/${current.id}.md`,
+          })
+        }
+      }
+      current = current.parentId ? this.getProject(current.parentId) : null
+      isSelf = false
+      guard += 1
+    }
+
+    if (metaChanged) await this.saveIndex()
+    return chain.reverse()
+  }
+
+  /** Pick up memory files edited outside the app. */
+  async refreshMemoryMeta() {
+    let changed = false
+    for (const project of this.index.projects) {
+      if (!project.memoryEnabled) {
+        if (project.memoryChars) {
+          project.memoryChars = 0
+          changed = true
+        }
+        continue
+      }
+      const memory = await this.readProjectMemory(project.id)
+      if (memory.chars !== project.memoryChars) {
+        project.memoryChars = memory.chars
+        changed = true
+      }
+      if (memory.updatedAt && memory.updatedAt !== project.memoryUpdatedAt) {
+        project.memoryUpdatedAt = memory.updatedAt
+        changed = true
+      }
+    }
+    if (changed) await this.saveIndex()
   }
 
   // ----------------------------------------------------------- conversations

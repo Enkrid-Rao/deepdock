@@ -1,5 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react'
-import { ArrowUp, Brain, Globe, Square } from 'lucide-react'
+import { ArrowUp, Brain, FileText, Globe, Square } from 'lucide-react'
+import { formatChars } from '../lib/projects'
+import type { MemoryRef } from '../lib/types'
 
 export function Composer({
   draft,
@@ -11,6 +13,8 @@ export function Composer({
   search,
   onToggleThinking,
   onToggleSearch,
+  memoryRefs = [],
+  onOpenMemory,
 }: {
   draft: string
   onDraftChange: (value: string) => void
@@ -21,6 +25,8 @@ export function Composer({
   search: boolean
   onToggleThinking: () => void
   onToggleSearch: () => void
+  memoryRefs?: MemoryRef[]
+  onOpenMemory?: (projectId: string) => void
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
 
@@ -44,6 +50,24 @@ export function Composer({
   return (
     <div className="composer-wrap">
       <div className="composer">
+        {memoryRefs.length ? (
+          <div className="composer-refs">
+            {memoryRefs.map((ref) => (
+              <button
+                key={ref.projectId}
+                type="button"
+                className="ref-chip"
+                title="查看 / 编辑项目记忆"
+                onClick={() => onOpenMemory?.(ref.projectId)}
+              >
+                <FileText size={12} />
+                <span>项目记忆 · {ref.name}</span>
+                <em>{formatChars(ref.chars)}</em>
+              </button>
+            ))}
+            <span className="ref-note">仅第一条消息引用</span>
+          </div>
+        ) : null}
         <textarea
           ref={ref}
           rows={1}

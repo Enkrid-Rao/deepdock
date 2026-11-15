@@ -4,6 +4,7 @@ import type {
   ConversationMeta,
   Message,
   Project,
+  ProjectMemory,
   SyncImportResult,
   SyncRefreshResult,
   SyncSessions,
@@ -56,15 +57,35 @@ export const api = {
   account: () => request<{ user: User }>('/api/account'),
   disconnect: () => request<{ connected: boolean }>('/api/disconnect', { method: 'POST' }),
 
-  createProject: (body: { name: string; color: string }) =>
+  createProject: (body: { name: string; color: string; parentId?: string | null }) =>
     request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(body) }),
 
-  updateProject: (id: string, body: { name?: string; color?: string }) =>
-    request<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  updateProject: (
+    id: string,
+    body: {
+      name?: string
+      color?: string
+      parentId?: string | null
+      includeSubprojects?: boolean
+    },
+  ) => request<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
   deleteProject: (id: string) =>
-    request<{ ok: boolean; conversations: ConversationMeta[] }>(`/api/projects/${id}`, {
-      method: 'DELETE',
+    request<{ ok: boolean; projects: Project[]; conversations: ConversationMeta[] }>(
+      `/api/projects/${id}`,
+      { method: 'DELETE' },
+    ),
+
+  getProjectMemory: (id: string) =>
+    request<ProjectMemory>(`/api/projects/${id}/memory`),
+
+  saveProjectMemory: (
+    id: string,
+    body: { content: string; enabled: boolean; includeSubprojects: boolean },
+  ) =>
+    request<{ project: Project; memory: ProjectMemory }>(`/api/projects/${id}/memory`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
     }),
 
   listConversations: () => request<ConversationMeta[]>('/api/conversations'),

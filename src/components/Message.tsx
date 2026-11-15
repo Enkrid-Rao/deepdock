@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { AlertCircle, Brain, RotateCw } from 'lucide-react'
+import { AlertCircle, Brain, FileText, RotateCw } from 'lucide-react'
 import { Markdown } from './Markdown'
 import { CopyButton } from './ui'
+import { formatChars } from '../lib/projects'
 import type { Message } from '../lib/types'
 
 function useStreamText(value: string, active: boolean, ms = 110) {
@@ -76,6 +77,21 @@ export const MessageView = memo(function MessageView({
   if (message.role === 'user') {
     return (
       <div className="msg msg-user">
+        {message.memoryRefs?.length ? (
+          <div className="msg-refs">
+            {message.memoryRefs.map((ref) => (
+              <span
+                key={ref.projectId}
+                className="ref-chip"
+                title={`项目记忆 · ${ref.file || `${ref.name}.md`}`}
+              >
+                <FileText size={11} />
+                <span>项目记忆 · {ref.name}</span>
+                <em>{formatChars(ref.chars)}</em>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div className="bubble">{message.content}</div>
         <div className="msg-actions">
           <CopyButton text={message.content} title="复制" />

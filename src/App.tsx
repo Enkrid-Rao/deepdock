@@ -6,6 +6,7 @@ import { Connect } from './components/Connect'
 import { ConfirmDialog, MoveDialog, ProjectDialog, PromptDialog } from './components/Dialogs'
 import { SyncDialog } from './components/SyncDialog'
 import { AppearanceDialog } from './components/AppearanceDialog'
+import { ProjectMemoryDialog } from './components/ProjectMemoryDialog'
 import { Mark, Toaster, type ToastItem } from './components/ui'
 import { api, ApiError, streamChat } from './lib/api'
 import {
@@ -15,6 +16,7 @@ import {
   saveAppearance,
   type Appearance,
 } from './lib/appearance'
+import { resolveMemoryRefs } from './lib/projects'
 import type {
   Bootstrap,
   Conversation,
@@ -105,7 +107,11 @@ export default function App() {
   const [convSyncing, setConvSyncing] = useState(false)
   const [, setThemeTick] = useState(0)
 
-  const [projectDialog, setProjectDialog] = useState<{ project: Project | null } | null>(null)
+  const [projectDialog, setProjectDialog] = useState<{
+    project: Project | null
+    parentId: string | null
+  } | null>(null)
+  const [memoryProject, setMemoryProject] = useState<Project | null>(null)
   const [promptDialog, setPromptDialog] = useState<{
     title: string
     description?: string
@@ -392,6 +398,19 @@ export default function App() {
         convId,
         { content: text, thinking, search, regenerate },
         {
+          onStart: (data) => {
+            if (regenerate || !data.userMessage) return
+            const stored = data.userMessage
+            setActiveConv((previous) => {
+              if (!previous || previous.id !== convId) return previous
+              return {
+                ...previous,
+                messages: previous.messages.map((message) =>
+                  message.id === userMsg.id ? { ...stored, streaming: false } : message,
+                ),
+              }
+            })
+          },
           onDelta: (delta) => pushDelta('content', delta),
           onReasoning: (delta) => pushDelta('reasoning', delta),
           onDone: (data) => {
@@ -555,7 +574,7 @@ export default function App() {
   )
 
   const saveProject = useCallback(
-    async (value: { name: string; color: string }) => {
+    async (value: { name: string; color: string; parentId: string | null }) => {
       const editing = projectDialog?.project || null
       setProjectDialog(null)
       try {
@@ -567,8 +586,8 @@ export default function App() {
           setProjects((prev) => [...prev, created])
           toast(`项目「${created.name}」已创建`)
         }
-      } catch {
-        toast('保存项目失败')
+      } catch (err) {
+        toast(err instanceof ApiError ? err.message : '保存项目失败')
       }
     },
     [projectDialog, toast],
@@ -578,13 +597,13 @@ export default function App() {
     (project: Project) => {
       setConfirmDialog({
         title: `删除项目「${project.name}」？`,
-        description: '项目里的对话不会被删除，只会回到「未分组」。',
+        description: '项目里的对话会回到「未分组」；子项目会向上移动一层，不会被一起删除。',
         confirmLabel: '删除项目',
         onConfirm: async () => {
           setConfirmDialog(null)
           try {
             const res = await api.deleteProject(project.id)
-            setProjects((prev) => prev.filter((p) => p.id !== project.id))
+            setProjects(res.projects)
             setConversations(sortConversations(res.conversations))
             if (activeConv?.projectId === project.id) {
               setActiveConv((prev) => (prev ? { ...prev, projectId: null } : prev))
@@ -596,6 +615,15 @@ export default function App() {
       })
     },
     [activeConv?.projectId, toast],
+  )
+
+  const saveProjectMemory = useCallback(
+    (project: Project) => {
+      setProjects((prev) => prev.map((item) => (item.id === project.id ? project : item)))
+      setMemoryProject((current) => (current && current.id === project.id ? project : current))
+      toast('项目记忆已保存')
+    },
+    [toast],
   )
 
   const accountAction = useCallback(
@@ -716,12 +744,30 @@ export default function App() {
 
   /* --------------------------------------------------------------- render */
 
+  const memoryRefs = useMemo(() => {
+    if (!activeConv || activeConv.messages.length > 0) return []
+    return resolveMemoryRefs(projects, activeConv.projectId)
+  }, [activeConv, projects])
+
+  const openMemoryForProject = useCallback(
+    (projectId: string) => {
+      const project = projects.find((item) => item.id === projectId)
+      if (project) setMemoryProject(project)
+    },
+    [projects],
+  )
+
   const sidebarActions = useMemo(
     () => ({
       newChat,
       select: (id: string) => void openConversation(id),
-      newProject: () => setProjectDialog({ project: null }),
-      renameProject: (project: Project) => setProjectDialog({ project }),
+      newProject: (parentId: string | null = null) =>
+        setProjectDialog({ project: null, parentId }),
+      newSubproject: (project: Project) =>
+        setProjectDialog({ project: null, parentId: project.id }),
+      editMemory: (project: Project) => setMemoryProject(project),
+      renameProject: (project: Project) =>
+        setProjectDialog({ project, parentId: project.parentId || null }),
       deleteProject,
       renameConversation,
       moveConversation: (conv: ConversationMeta) => setMoveConv(conv),
@@ -841,6 +887,8 @@ export default function App() {
           onSync={openSync}
           onSyncConversation={() => void syncConversation()}
           syncingConversation={convSyncing}
+          memoryRefs={memoryRefs}
+          onOpenMemory={openMemoryForProject}
         />
       </div>
 
@@ -879,8 +927,17 @@ export default function App() {
       <ProjectDialog
         open={Boolean(projectDialog)}
         project={projectDialog?.project || null}
+        projects={projects}
+        initialParentId={projectDialog?.parentId || null}
         onClose={() => setProjectDialog(null)}
         onSubmit={(value) => void saveProject(value)}
+      />
+
+      <ProjectMemoryDialog
+        open={Boolean(memoryProject)}
+        project={memoryProject}
+        onClose={() => setMemoryProject(null)}
+        onSaved={saveProjectMemory}
       />
 
       <MoveDialog

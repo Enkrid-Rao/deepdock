@@ -12,9 +12,13 @@
 ![深色主题 · 现代黑](docs/shot-dark.png)
 
 <details>
-<summary>从网页同步对话 / 外观定制</summary>
+<summary>从网页同步对话 / 项目树与项目记忆 / 外观定制</summary>
 
 ![从网页同步对话](docs/shot-sync.png)
+
+![项目树与项目记忆](docs/shot-projects.png)
+
+![项目记忆编辑器](docs/shot-memory.png)
 
 ![外观与主题](docs/shot-appearance.png)
 </details>
@@ -62,6 +66,12 @@ npm run icon         # 重新生成 build/icon.ico
 $env:DEEPDOCK_MOCK='1'; npm run desktop
 ```
 
+调试时想用独立数据目录（不影响 `%APPDATA%\DeepDock`）：
+
+```powershell
+$env:DEEPDOCK_MOCK='1'; $env:DEEPDOCK_USER_DATA='D:\Temp\deepdock-dev'; npm run desktop
+```
+
 ## 连接账号
 
 DeepSeek 网页端的登录凭证**不在 Cookie 里**，而是存在浏览器的 localStorage 里，接口只认
@@ -104,6 +114,22 @@ node scripts/check-auth.mjs --validate # 再问一次 DeepSeek 这些 token 是�
 DeepSeek 的 userToken 本身有效期很长，深坞会一直复用；如果哪天真的失效了，会在启动时或
 生成失败后自动回浏览器再取一次，取不到才提示重新连接。
 
+## 项目树与项目记忆
+
+项目可以嵌套：项目行「⋯」→ **新建子项目**；编辑项目时也可以修改父项目，把它移动到另一层。
+删除项目时，子项目会向上移动一层，不会被一起删掉。
+
+每个项目还可以写一份 **Markdown 项目记忆**（项目行「⋯」→ 项目记忆…，或点项目名旁的小文件图标）：
+
+- 项目内**新建对话的第一条消息**会把这份 Markdown 作为背景发给 DeepSeek；
+- 输入框和消息里只显示「项目记忆 · 项目名」引用标签，正文不会塞进你打的字；
+- 默认只作用于本项目；打开「同时应用到子项目」后，所有后代项目的第一条消息也会引用它；
+- 记忆文件存在 `data/project-memory/<项目 id>.md`，可以直接用编辑器修改；
+- 网页端的聊天记录里，这段内容会出现在第一条消息里（DeepSeek 接口只接受文本 prompt）；DeepDock 界面只显示引用标签；
+- 关闭开关或清空内容就不会引用；子项目自己也可以有独立的记忆，会按「根项目 → 子项目」顺序拼接。
+
+> 项目记忆会作为 prompt 的一部分发给 DeepSeek，请不要把密钥、密码等敏感信息写进去。
+
 ## 从网页同步对话
 
 头像菜单 / 顶栏云朵按钮 / `Ctrl + K` 都能打开「从网页同步对话」：
@@ -132,7 +158,8 @@ DeepSeek 的 userToken 本身有效期很长，深坞会一直复用；如果哪
 
 | 功能 | 说明 |
 | --- | --- |
-| 项目分组 | 新建 / 重命名 / 删除项目；对话随时「移动到项目」；项目只用于分组，不参与任何提示词 |
+| 项目分组 | 新建 / 重命名 / 删除项目；**项目可嵌套**；对话随时「移动到项目」；项目只用于分组，不参与任何提示词 |
+| 项目记忆 | 每个项目可选一份 Markdown 记忆文件，项目内新对话的第一条消息以引用标签的形式带上它；可设置是否包含子项目 |
 | 网页历史同步 | 把 chat.deepseek.com 的历史会话导入本地，导入后继续对话会写回同一个网页会话 |
 | 自动保持登录 | 启动时自动从本机浏览器读取并验证 token；失效时自动续取，不必反复粘贴 |
 | 置顶 | 重要对话钉在列表顶部 |
@@ -156,6 +183,8 @@ DeepDock\
 │   ├── index.json              项目 + 对话索引（标题、分组、置顶、时间）
 │   ├── conversations\
 │   │   └── <uuid>.json         单个对话的全部消息（含思考过程、导入标记）
+│   ├── project-memory\
+│   │   └── <project-id>.md     项目记忆（可外部编辑）
 │   └── credentials.json        账号凭证（唯一含密钥的文件）
 ├── appearance.json             上次的窗口底色（避免启动闪白）
 └── window-state.json           窗口尺寸 / 位置
