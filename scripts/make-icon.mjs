@@ -1,5 +1,9 @@
-// Renders build/icon.ico (multi-size) and build/icon.png from the DeepDock mark.
-// Uses the local Chromium that ships with the dev dependencies.
+// Renders build/icon.ico (multi-size) + build/icon.png + public/favicon.png
+// from build/icon-source.png, using the local Chromium that ships with the
+// dev dependencies (no native image libraries required).
+//
+// Replace build/icon-source.png (512×512 PNG with transparency) and re-run
+// `npm run icon` to change the app icon.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -9,24 +13,9 @@ import { chromium } from 'playwright-core'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '..')
 const BUILD = path.join(ROOT, 'build')
+const SOURCE = path.join(BUILD, 'icon-source.png')
 
 const SIZES = [16, 24, 32, 48, 64, 128, 256]
-
-const SVG = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="100%" height="100%">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#18806c"/>
-      <stop offset="1" stop-color="#0b4a3f"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="15" fill="url(#g)"/>
-  <g stroke="#f7fdfa" stroke-width="3.4" stroke-linecap="round" fill="none">
-    <path d="M13 24c4 0 4-4.4 8-4.4s4 4.4 8 4.4 4-4.4 8-4.4 4 4.4 8 4.4"/>
-    <path d="M13 34c4 0 4-4.4 8-4.4s4 4.4 8 4.4 4-4.4 8-4.4 4 4.4 8 4.4" opacity=".78"/>
-    <path d="M13 44c4 0 4-4.4 8-4.4s4 4.4 8 4.4 4-4.4 8-4.4 4 4.4 8 4.4" opacity=".5"/>
-  </g>
-</svg>`
 
 function chromiumPath() {
   const base = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright')
@@ -67,26 +56,41 @@ function buildIco(images) {
   return Buffer.concat([header, ...entries, ...images.map((i) => i.png)])
 }
 
-fs.mkdirSync(BUILD, { recursive: true })
+if (!fs.existsSync(SOURCE)) {
+  console.error(`missing ${SOURCE} — put a 512×512 PNG there first`)
+  process.exit(1)
+}
 
-const executablePath = chromiumPath()
-const browser = await chromium.launch({ executablePath, headless: true })
+const dataUrl = `data:image/png;base64,${fs.readFileSync(SOURCE).toString('base64')}`
+
+const browser = await chromium.launch({ executablePath: chromiumPath(), headless: true })
 const page = await browser.newPage({ deviceScaleFactor: 1 })
 
-const images = []
-for (const size of SIZES) {
+async function render(size) {
   await page.setViewportSize({ width: size, height: size })
   await page.setContent(
-    `<html><body style="margin:0;background:transparent">${SVG.replace('width="100%" height="100%"', `width="${size}" height="${size}"`)}</body></html>`,
+    `<html><body style="margin:0;background:transparent;overflow:hidden">
+       <img src="${dataUrl}" width="${size}" height="${size}"
+            style="display:block;width:${size}px;height:${size}px" />
+     </body></html>`,
   )
-  const buffer = await page.screenshot({ omitBackground: true, type: 'png' })
-  images.push({ size, png: buffer })
+  await page.waitForFunction(() => {
+    const img = document.querySelector('img')
+    return img && img.complete && img.naturalWidth > 0
+  })
+  return page.screenshot({ omitBackground: true, type: 'png' })
 }
+
+const images = []
+for (const size of SIZES) images.push({ size, png: await render(size) })
+
+const favicon = await render(64)
 
 await browser.close()
 
+fs.mkdirSync(BUILD, { recursive: true })
+fs.mkdirSync(path.join(ROOT, 'public'), { recursive: true })
 fs.writeFileSync(path.join(BUILD, 'icon.ico'), buildIco(images))
-const png512 = images[images.length - 1].png
-fs.writeFileSync(path.join(BUILD, 'icon.png'), png512)
-fs.writeFileSync(path.join(ROOT, 'public', 'favicon.svg'), `${SVG.trim()}\n`)
-console.log(`icon.ico (${SIZES.join('/')}) + icon.png written`)
+fs.writeFileSync(path.join(BUILD, 'icon.png'), images[images.length - 1].png)
+fs.writeFileSync(path.join(ROOT, 'public', 'favicon.png'), favicon)
+console.log(`icon.ico (${SIZES.join('/')}) + icon.png + favicon.png written`)
