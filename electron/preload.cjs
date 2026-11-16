@@ -16,4 +16,6 @@ contextBridge.exposeInMainWorld('deepdockDesktop', {
   // never handed to the renderer.
   autoConnect: () => ipcRenderer.invoke('deepdock:auto-connect'),
   scanInfo: () => ipcRenderer.invoke('deepdock:scan-info'),
+  // Packaged builds check GitHub Releases for a newer version.
+  checkUpdates: () => ipcRenderer.invoke('deepdock:check-updates'),
 })

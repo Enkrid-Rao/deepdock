@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   CloudDownload,
+  Download,
   FileText,
   FolderPlus,
   Moon,
@@ -50,7 +51,7 @@ type Actions = {
   moveConversation: (conv: ConversationMeta) => void
   deleteConversation: (conv: ConversationMeta) => void
   pinConversation: (conv: ConversationMeta) => void
-  account: (action: 'refresh' | 'reconnect' | 'disconnect' | 'dataFolder') => void
+  account: (action: 'refresh' | 'reconnect' | 'disconnect' | 'dataFolder' | 'checkUpdates') => void
   sync: () => void
   appearance: () => void
 }
@@ -587,16 +588,28 @@ export function Sidebar({
               </button>
               <div className="menu-sep" />
               {desktop ? (
-                <button
-                  type="button"
-                  className="menu-item"
-                  onClick={() => {
-                    close()
-                    actions.account('dataFolder')
-                  }}
-                >
-                  <FolderInput size={14} /> 打开数据目录
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => {
+                      close()
+                      actions.account('dataFolder')
+                    }}
+                  >
+                    <FolderInput size={14} /> 打开数据目录
+                  </button>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => {
+                      close()
+                      actions.account('checkUpdates')
+                    }}
+                  >
+                    <Download size={14} /> 检查更新
+                  </button>
+                </>
               ) : null}
               <button
                 type="button"

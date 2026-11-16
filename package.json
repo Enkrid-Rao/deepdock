@@ -37,6 +37,7 @@
     "fonts": "node scripts/fetch-fonts.mjs"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "express": "^4.21.2"
   },
   "devDependencies": {
@@ -70,6 +71,13 @@
     "asar": false,
     "npmRebuild": false,
     "electronDist": "node_modules/electron/dist",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Enkrid-Rao",
+        "repo": "deepdock"
+      }
+    ],
     "directories": {
       "output": "release/builder"
     },

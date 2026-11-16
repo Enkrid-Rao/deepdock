@@ -3,6 +3,7 @@
 // window on it. No Node integration in the renderer, no remote content.
 
 const { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme } = require('electron')
+const { autoUpdater } = require('electron-updater')
 const path = require('node:path')
 const fs = require('node:fs')
 const { pathToFileURL } = require('node:url')
@@ -326,6 +327,77 @@ ipcMain.handle('deepdock:confirm', async (event, options) => {
   return result.response === 0
 })
 
+/* ------------------------------------------------------------ auto update */
+
+// electron-builder embeds an `app-update.yml` pointing at GitHub Releases, so
+// electron-updater only needs a nudge: check after launch, download quietly,
+// then ask before restarting. Disabled in dev builds (no app-update.yml).
+let updatePromptOpen = false
+let updateAvailable = false
+let updateVersion = ''
+
+function setupAutoUpdater() {
+  if (IS_DEV) return
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.on('error', (err) => {
+    console.warn('[deepdock] updater:', err?.message || err)
+  })
+  autoUpdater.on('update-available', (info) => {
+    updateAvailable = true
+    updateVersion = info?.version || ''
+    console.log('[deepdock] update available:', updateVersion)
+  })
+  autoUpdater.on('update-not-available', () => {
+    updateAvailable = false
+    updateVersion = ''
+  })
+  autoUpdater.on('update-downloaded', async (info) => {
+    if (updatePromptOpen) return
+    updatePromptOpen = true
+    try {
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        buttons: ['立即重启安装', '稍后'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+        title: 'DeepDock 有新版本',
+        message: `新版本 ${info?.version || ''} 已经下载好`,
+        detail: '现在重启会立即安装；选择「稍后」则在下次退出 DeepDock 时自动安装。',
+      })
+      if (response === 0) {
+        setImmediate(() => autoUpdater.quitAndInstall(true, true))
+      }
+    } finally {
+      updatePromptOpen = false
+    }
+  })
+
+  // Give the window time to paint before touching the network.
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(() => {})
+  }, 15000)
+  const timer = setInterval(() => {
+    autoUpdater.checkForUpdates().catch(() => {})
+  }, 6 * 60 * 60 * 1000)
+  if (timer.unref) timer.unref()
+}
+
+ipcMain.handle('deepdock:check-updates', async () => {
+  if (IS_DEV) return { status: 'dev', version: app.getVersion() }
+  try {
+    await autoUpdater.checkForUpdates()
+    if (updateAvailable) {
+      return { status: 'downloading', version: updateVersion || app.getVersion(), current: app.getVersion() }
+    }
+    return { status: 'current', version: app.getVersion() }
+  } catch (err) {
+    return { status: 'error', message: err?.message || '检查更新失败' }
+  }
+})
+
 /* -------------------------------------------------------------- lifecycle */
 
 const gotLock = app.requestSingleInstanceLock()
@@ -344,6 +416,7 @@ if (!gotLock) {
     try {
       const port = await startServer()
       mainWindow = createWindow(port)
+      setupAutoUpdater()
     } catch (err) {
       console.error('[deepdock] failed to start', err)
       dialog.showErrorBox(

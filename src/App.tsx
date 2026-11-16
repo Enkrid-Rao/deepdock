@@ -42,6 +42,13 @@ type AutoConnectResult = {
   user?: User | null
 }
 
+type UpdateCheckResult = {
+  status: 'current' | 'downloading' | 'dev' | 'error'
+  version?: string
+  current?: string
+  message?: string
+}
+
 type DesktopBridge = {
   isDesktop: boolean
   platform: string
@@ -50,6 +57,7 @@ type DesktopBridge = {
   openExternal: (url: string) => Promise<void>
   info: () => Promise<{ version: string; dataDir: string; electron: string }>
   autoConnect?: () => Promise<AutoConnectResult>
+  checkUpdates?: () => Promise<UpdateCheckResult>
 }
 
 const desktop = (window as unknown as { deepdockDesktop?: DesktopBridge }).deepdockDesktop
@@ -658,10 +666,32 @@ export default function App() {
   )
 
   const accountAction = useCallback(
-    async (action: 'refresh' | 'reconnect' | 'disconnect' | 'dataFolder') => {
+    async (action: 'refresh' | 'reconnect' | 'disconnect' | 'dataFolder' | 'checkUpdates') => {
       if (action === 'dataFolder') {
         const result = await desktop?.openDataFolder()
         if (!result?.ok) toast('没能打开数据目录')
+        return
+      }
+      if (action === 'checkUpdates') {
+        if (!desktop?.checkUpdates) {
+          toast('只有桌面版可以检查更新')
+          return
+        }
+        toast('正在检查更新…')
+        try {
+          const result = await desktop.checkUpdates()
+          if (result.status === 'current') {
+            toast(`已经是最新版本（v${result.version || ''}）`)
+          } else if (result.status === 'downloading') {
+            toast(`发现新版本 v${result.version || ''}，正在后台下载…`)
+          } else if (result.status === 'dev') {
+            toast('开发模式下不检查更新')
+          } else {
+            toast(result.message || '检查更新失败，请稍后再试')
+          }
+        } catch {
+          toast('检查更新失败，请稍后再试')
+        }
         return
       }
       if (action === 'refresh') {
@@ -804,7 +834,7 @@ export default function App() {
       moveConversation: (conv: ConversationMeta) => setMoveConv(conv),
       deleteConversation,
       pinConversation,
-      account: (action: 'refresh' | 'reconnect' | 'disconnect' | 'dataFolder') =>
+      account: (action: 'refresh' | 'reconnect' | 'disconnect' | 'dataFolder' | 'checkUpdates') =>
         void accountAction(action),
       sync: () => openSync(),
       appearance: () => setAppearanceOpen(true),
