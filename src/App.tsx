@@ -686,6 +686,8 @@ export default function App() {
             toast(`发现新版本 v${result.version || ''}，正在后台下载…`)
           } else if (result.status === 'dev') {
             toast('开发模式下不检查更新')
+          } else if (/net::|network|timed?\s?out|ECONN|ENOTFOUND/i.test(result.message || '')) {
+            toast('连不上 GitHub，检查更新需要能访问 GitHub（可开启系统代理）')
           } else {
             toast(result.message || '检查更新失败，请稍后再试')
           }

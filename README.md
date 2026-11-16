@@ -62,6 +62,24 @@ npm run icon         # 重新生成 build/icon.ico
 
 纯浏览器模式也保留着（`npm start` → <http://127.0.0.1:5180>），方便调 UI。
 
+### 发布新版本
+
+自动更新按 `latest.yml` 里的版本号比较，所以**版本号、tag、Release 资源三者必须对得上**，
+也不要在同一个版本号下悄悄换内容（已经装上的用户不会收到更新）：
+
+1. 改 `package.json` 的 `version`：新功能升 minor，修复升 patch；
+2. `npm run installer`，产物在 `release/builder/`；
+3. `git commit`、打 tag（如 `v1.3.0`）、`git push --follow-tags`；
+4. 在 GitHub 建同名 Release，上传这几个文件（**缺 `latest.yml` 更新就不会生效**）：
+   - `DeepDock-Setup-<version>.exe`
+   - `DeepDock-Setup-<version>.exe.blockmap`
+   - `latest.yml`
+   - `DeepDock-<version>-win-x64.zip`（绿色版，可选）
+5. 已安装的旧版本会在 6 小时内（或手动「检查更新」）发现它并自动下载。
+
+> 自动更新走 GitHub Releases，国内网络需要能访问 GitHub；应用跟随系统代理
+> （Clash 打开「系统代理」即可），没有单独的代理设置项。
+
 没有账号先看界面：
 
 ```powershell
