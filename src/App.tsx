@@ -838,6 +838,7 @@ export default function App() {
           projects={projects}
           conversations={conversations}
           activeId={activeId}
+          activeProjectId={activeConv?.projectId || null}
           user={boot.user}
           dark={dark}
           savedAt={boot.savedAt ?? null}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   CloudDownload,
@@ -59,6 +59,7 @@ export function Sidebar({
   projects,
   conversations,
   activeId,
+  activeProjectId,
   user,
   dark,
   savedAt,
@@ -73,6 +74,7 @@ export function Sidebar({
   projects: Project[]
   conversations: ConversationMeta[]
   activeId: string | null
+  activeProjectId?: string | null
   user: User | null
   dark: boolean
   savedAt?: number | null
@@ -100,10 +102,20 @@ export function Sidebar({
   }
 
   const expand = (id: string) => {
+    expandAll([id])
+  }
+
+  const projectsRef = useRef(projects)
+  projectsRef.current = projects
+
+  const expandAll = (ids: string[]) => {
     setCollapsed((prev) => {
-      if (!prev.has(id)) return prev
       const next = new Set(prev)
-      next.delete(id)
+      let changed = false
+      for (const id of ids) {
+        if (next.delete(id)) changed = true
+      }
+      if (!changed) return prev
       try {
         localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...next]))
       } catch {
@@ -112,6 +124,23 @@ export function Sidebar({
       return next
     })
   }
+
+  // Reveal the active conversation when selection changes, but never re-open a
+  // group the user has just collapsed (the active id stays the same then).
+  useEffect(() => {
+    if (!activeId) return
+    const keys = new Set<string>([activeProjectId || UNGROUPED])
+    let current = activeProjectId
+      ? projectsRef.current.find((project) => project.id === activeProjectId)
+      : undefined
+    while (current) {
+      keys.add(current.id)
+      current = current.parentId
+        ? projectsRef.current.find((project) => project.id === current?.parentId)
+        : undefined
+    }
+    expandAll([...keys])
+  }, [activeId, activeProjectId])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -149,13 +178,6 @@ export function Sidebar({
   }, [projects])
 
   const roots = projectChildren.get(null) || []
-
-  const hasActiveInProject = (projectId: string, seen = new Set<string>()): boolean => {
-    if (seen.has(projectId)) return false
-    seen.add(projectId)
-    if ((byProject.get(projectId) || []).some((conv) => conv.id === activeId)) return true
-    return (projectChildren.get(projectId) || []).some((child) => hasActiveInProject(child.id, seen))
-  }
 
   const convRow = (conv: ConversationMeta, showProject: boolean) => {
     const project = showProject ? projects.find((p) => p.id === conv.projectId) : null
@@ -264,7 +286,7 @@ export function Sidebar({
     const key = project.id
     const items = byProject.get(key) || []
     const children = projectChildren.get(key) || []
-    const open = searching || !collapsed.has(key) || hasActiveInProject(key)
+    const open = searching || !collapsed.has(key)
 
     return (
       <div className="project-group" key={key} data-depth={depth}>
@@ -397,7 +419,7 @@ export function Sidebar({
   }
 
   const renderUngrouped = () => {
-    const open = searching || !collapsed.has(UNGROUPED) || ungrouped.some((conv) => conv.id === activeId)
+    const open = searching || !collapsed.has(UNGROUPED)
     return (
       <div className="project-group" key={UNGROUPED}>
         <div
