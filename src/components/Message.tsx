@@ -92,7 +92,9 @@ export const MessageView = memo(function MessageView({
             ))}
           </div>
         ) : null}
-        <div className="bubble">{message.content}</div>
+        <div className="bubble">
+          <Markdown content={message.content} variant="user" />
+        </div>
         <div className="msg-actions">
           <CopyButton text={message.content} title="复制" />
         </div>

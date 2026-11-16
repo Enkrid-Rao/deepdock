@@ -1,10 +1,11 @@
-import { memo, type ReactNode } from 'react'
+import { memo, useMemo, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
 import { CopyButton } from './ui'
+import { normalizeMathDelimiters } from '../lib/math'
 
 function nodeText(node: ReactNode): string {
   if (node == null || typeof node === 'boolean') return ''
@@ -47,9 +48,19 @@ const components = {
   ),
 } as never
 
-export const Markdown = memo(function Markdown({ content }: { content: string }) {
+export const Markdown = memo(function Markdown({
+  content,
+  variant = 'assistant',
+}: {
+  content: string
+  /** `user` keeps the chat-bubble look while still rendering Markdown / math. */
+  variant?: 'assistant' | 'user'
+}) {
+  // DeepSeek writes LaTeX as `\(...\)` / `\[...\]`; remark-math only knows `$`.
+  const source = useMemo(() => normalizeMathDelimiters(content), [content])
+
   return (
-    <div className="prose">
+    <div className={variant === 'user' ? 'prose prose-user' : 'prose'}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[
@@ -58,7 +69,7 @@ export const Markdown = memo(function Markdown({ content }: { content: string })
         ]}
         components={components}
       >
-        {content}
+        {source}
       </ReactMarkdown>
     </div>
   )

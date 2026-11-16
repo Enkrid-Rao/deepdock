@@ -1604,6 +1604,80 @@ kbd {
   border-radius: 10px;
 }
 
+/* Markdown / KaTeX inside a user bubble: keep the bubble's own type scale and
+   spacing instead of the document prose rhythm. Declared after `.prose` so the
+   overrides win without extra selectors. */
+.prose-user {
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  white-space: pre-wrap;
+}
+
+/* `:not(:first-child)` rather than `* + *` so the rule keeps enough
+   specificity to beat `.prose-user p { margin: 0 }` below. */
+.prose-user > :not(:first-child) {
+  margin-top: 8px;
+}
+
+.prose-user p {
+  margin: 0;
+}
+
+.prose-user h1,
+.prose-user h2,
+.prose-user h3,
+.prose-user h4 {
+  margin: 8px 0 4px;
+  font-size: 1.02em;
+  color: inherit;
+}
+
+.prose-user strong {
+  color: inherit;
+}
+
+.prose-user ul,
+.prose-user ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.prose-user li {
+  margin: 1px 0;
+}
+
+.prose-user li::marker {
+  color: color-mix(in oklab, var(--bubble-ink) 45%, transparent);
+}
+
+.prose-user blockquote {
+  margin: 6px 0;
+  padding-left: 10px;
+  color: inherit;
+  border-left-color: color-mix(in oklab, var(--bubble-ink) 25%, transparent);
+}
+
+.prose-user code {
+  color: inherit;
+  background: color-mix(in oklab, var(--bubble-ink) 9%, transparent);
+  border-color: color-mix(in oklab, var(--bubble-ink) 11%, transparent);
+}
+
+.prose-user pre {
+  margin: 8px 0;
+}
+
+.prose-user .code-block {
+  border-color: color-mix(in oklab, var(--bubble-ink) 14%, transparent);
+  background: color-mix(in oklab, var(--bubble-ink) 5%, transparent);
+}
+
+.prose-user .katex-display {
+  margin: 8px 0;
+  max-width: 100%;
+}
+
 /* code block */
 
 .code-block {
@@ -2606,6 +2680,27 @@ kbd {
 .sync-more:hover {
   background: var(--hover);
   color: var(--ink-2);
+}
+
+.sync-more:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.sync-end {
+  margin: 8px auto 2px;
+  padding: 4px 10px;
+  color: var(--faint);
+  font-size: 11.5px;
+  text-align: center;
+  flex: none;
+}
+
+.sync-empty-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: 11.8px;
 }
 
 /* --------------------------------------------------------- appearance dialog */

@@ -1,11 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, CloudDownload, Loader2, RotateCw, Search } from 'lucide-react'
+import { Check, ChevronsDown, CloudDownload, Loader2, RotateCw, Search } from 'lucide-react'
 import { Dialog } from './ui'
 import { api, ApiError } from '../lib/api'
 import { relativeTime } from '../lib/format'
-import type { ConversationMeta, RemoteSession, SyncCursor, SyncImportResult } from '../lib/types'
+import type {
+  ConversationMeta,
+  RemoteSession,
+  SyncCursor,
+  SyncImportResult,
+  SyncImportRow,
+  SyncSessions,
+} from '../lib/types'
 
 const PAGE_SIZE = 40
+/** Safety valve for 「加载全部」: 60 pages × 40 ≈ 2400 remote conversations. */
+const MAX_PAGES = 60
+/** The import endpoint accepts at most 40 ids per call. */
+const IMPORT_BATCH = 40
 
 function errorText(err: unknown): string {
   if (err instanceof ApiError) {
@@ -14,6 +25,17 @@ function errorText(err: unknown): string {
     return payload?.message || err.message
   }
   return '读取网页端对话失败，请稍后再试。'
+}
+
+function mergeSessions(previous: RemoteSession[], incoming: RemoteSession[]): RemoteSession[] {
+  const merged = previous.slice()
+  const seen = new Set(merged.map((item) => item.id))
+  for (const item of incoming) {
+    if (seen.has(item.id)) continue
+    seen.add(item.id)
+    merged.push(item)
+  }
+  return merged
 }
 
 export function SyncDialog({
@@ -31,43 +53,120 @@ export function SyncDialog({
   const [hasMore, setHasMore] = useState(false)
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
+  const [loadingAll, setLoadingAll] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+
   const requestSeq = useRef(0)
+  const busy = useRef(false)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const moreRef = useRef<HTMLButtonElement | null>(null)
+  const openRef = useRef(open)
+  openRef.current = open
+
+  const fetchPage = useCallback(
+    (from: SyncCursor | null) =>
+      api.syncSessions({
+        limit: PAGE_SIZE,
+        ...(from ? { cursorPinned: from.pinned, cursorUpdatedAt: from.updatedAt } : {}),
+      }),
+    [],
+  )
+
+  const commit = useCallback((data: SyncSessions, append: boolean) => {
+    setSessions((previous) => (append ? mergeSessions(previous, data.sessions) : data.sessions))
+    setCursor(data.nextCursor)
+    // `nextCursor` is what actually drives the next request, so treat a page
+    // without one as the end even if the server still claims has_more.
+    setHasMore(Boolean(data.hasMore && data.nextCursor && data.sessions.length))
+    return data.sessions
+  }, [])
 
   const load = useCallback(
-    async (nextCursor: SyncCursor | null = null, append = false) => {
+    async (from: SyncCursor | null = null, append = false) => {
       const seq = ++requestSeq.current
+      busy.current = true
       setLoading(true)
       setError(null)
       try {
-        const data = await api.syncSessions({
-          limit: PAGE_SIZE,
-          ...(nextCursor
-            ? { cursorPinned: nextCursor.pinned, cursorUpdatedAt: nextCursor.updatedAt }
-            : {}),
-        })
+        const data = await fetchPage(from)
         if (seq !== requestSeq.current) return
-        setSessions((previous) => {
-          const merged = append ? [...previous] : []
-          const seen = new Set(merged.map((item) => item.id))
-          for (const item of data.sessions) if (!seen.has(item.id)) merged.push(item)
-          return merged
-        })
+        commit(data, append)
         if (!append) {
           setSelected(new Set(data.sessions.filter((item) => !item.imported).map((item) => item.id)))
         }
-        setHasMore(data.hasMore)
-        setCursor(data.nextCursor)
       } catch (err) {
         if (seq === requestSeq.current) setError(errorText(err))
       } finally {
-        if (seq === requestSeq.current) setLoading(false)
+        if (seq === requestSeq.current) {
+          busy.current = false
+          setLoading(false)
+        }
       }
     },
-    [],
+    [commit, fetchPage],
   )
+
+  const loadMore = useCallback(async () => {
+    if (busy.current || loading || loadingAll || !hasMore) return
+    const seq = ++requestSeq.current
+    busy.current = true
+    setLoading(true)
+    setError(null)
+    try {
+      const data = await fetchPage(cursor)
+      if (seq !== requestSeq.current) return
+      commit(data, true)
+    } catch (err) {
+      if (seq === requestSeq.current) setError(errorText(err))
+    } finally {
+      if (seq === requestSeq.current) {
+        busy.current = false
+        setLoading(false)
+      }
+    }
+  }, [commit, cursor, fetchPage, hasMore, loading, loadingAll])
+
+  const loadAll = useCallback(async () => {
+    if (busy.current || loading || loadingAll || !hasMore) return
+    const seq = ++requestSeq.current
+    busy.current = true
+    setLoadingAll(true)
+    setError(null)
+    setNotice(null)
+    let from = cursor
+    let more: boolean = hasMore
+    let pages = 0
+    let total = sessions.length
+    try {
+      while (more && pages < MAX_PAGES) {
+        // Closing the dialog stops the bulk read; whatever arrived is still
+        // committed, and the next open starts from the first page again.
+        if (!openRef.current) return
+        const data = await fetchPage(from)
+        if (seq !== requestSeq.current) return
+        const added = commit(data, true)
+        total += added.length
+        from = data.nextCursor
+        more = Boolean(data.hasMore && data.nextCursor && data.sessions.length)
+        pages += 1
+      }
+      if (!openRef.current) return
+      if (more) {
+        // Hit the page cap: say so and keep the button, the user can repeat it.
+        setNotice(`已加载 ${total} 个对话，网页端还有更早的；可以再点一次「加载全部」继续。`)
+      }
+    } catch (err) {
+      if (seq === requestSeq.current) setError(errorText(err))
+    } finally {
+      if (seq === requestSeq.current) {
+        busy.current = false
+        setLoadingAll(false)
+      }
+    }
+  }, [commit, cursor, fetchPage, hasMore, loading, loadingAll, sessions.length])
 
   useEffect(() => {
     if (!open) return
@@ -75,10 +174,31 @@ export function SyncDialog({
     setSelected(new Set())
     setQuery('')
     setNotice(null)
+    setError(null)
     setHasMore(false)
     setCursor(null)
     void load()
   }, [open, load])
+
+  // Load the next page by itself when the user scrolls the list to its end.
+  // The button at the bottom doubles as the sentinel, so it still works with
+  // a mouse or the keyboard; while searching we keep the requests manual.
+  const searching = Boolean(query.trim())
+  useEffect(() => {
+    if (!open || !hasMore || searching) return undefined
+    const root = listRef.current
+    const target = moreRef.current
+    if (!root || !target || typeof IntersectionObserver === 'undefined') return undefined
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadMore()
+      },
+      { root, rootMargin: '140px 0px' },
+    )
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [open, hasMore, searching, loading, loadingAll, loadMore])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -105,26 +225,69 @@ export function SyncDialog({
 
   const runImport = async () => {
     if (!selectedPending.length || importing) return
+    const ids = selectedPending
     setImporting(true)
+    setImportProgress({ done: 0, total: ids.length })
     setError(null)
     setNotice(null)
-    try {
-      const result = await api.syncImport(selectedPending)
-      onImported(result)
-      const failedRows = result.results.filter((row) => row.status === 'failed')
-      if (failedRows.length) {
-        setNotice(`${result.imported} 个已导入，${failedRows.length} 个失败：${failedRows[0].message || '上游错误'}`)
-        setSelected(new Set())
-        void load()
-      } else {
-        onClose()
+
+    const results: SyncImportRow[] = []
+    let conversations: ConversationMeta[] | null = null
+    let failure: unknown = null
+
+    // The API takes at most 40 ids per call, and after 「加载全部」 the user can
+    // easily have hundreds selected, so walk the list in batches.
+    for (let index = 0; index < ids.length; index += IMPORT_BATCH) {
+      if (!openRef.current) break
+      const chunk = ids.slice(index, index + IMPORT_BATCH)
+      try {
+        const res = await api.syncImport(chunk)
+        results.push(...res.results)
+        if (res.conversations?.length) conversations = res.conversations
+      } catch (err) {
+        failure = err
+        break
       }
-    } catch (err) {
-      setError(errorText(err))
-    } finally {
-      setImporting(false)
+      setImportProgress({ done: index + chunk.length, total: ids.length })
     }
+
+    setImporting(false)
+    setImportProgress(null)
+
+    if (conversations) {
+      onImported({
+        results,
+        imported: results.filter((row) => row.status === 'imported').length,
+        skipped: results.filter((row) => row.status === 'exists').length,
+        failed: results.filter((row) => row.status === 'failed').length,
+        conversations,
+      })
+    }
+
+    const failedRows = results.filter((row) => row.status === 'failed')
+    if (failure) {
+      setError(errorText(failure))
+      setSelected(new Set())
+      void load()
+      return
+    }
+    if (failedRows.length) {
+      const imported = results.filter((row) => row.status === 'imported').length
+      setNotice(`${imported} 个已导入，${failedRows.length} 个失败：${failedRows[0].message || '上游错误'}`)
+      setSelected(new Set())
+      void load()
+      return
+    }
+    onClose()
   }
+
+  const footerNote = (
+    <>
+      已选 {selectedPending.length} 个
+      {sessions.length ? ` · 已加载 ${sessions.length} 个` : ''}
+      {hasMore ? ' · 还有更早的' : ''}
+    </>
+  )
 
   return (
     <Dialog
@@ -136,10 +299,7 @@ export function SyncDialog({
       description="把 chat.deepseek.com 的会话拉进 DeepDock。导入后会保留网页端的会话链，之后在 DeepDock 继续提问，回复也会出现在网页端历史里。"
       footer={
         <>
-          <span className="sync-foot-note">
-            已选 {selectedPending.length} 个
-            {pending.length ? ` · 共 ${pending.length} 个未导入` : ''}
-          </span>
+          <span className="sync-foot-note">{footerNote}</span>
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             取消
           </button>
@@ -152,7 +312,9 @@ export function SyncDialog({
           >
             {importing ? <Loader2 size={14} className="spin" /> : <CloudDownload size={14} />}
             {importing
-              ? '正在导入…'
+              ? importProgress && importProgress.total > IMPORT_BATCH
+                ? `正在导入 ${importProgress.done}/${importProgress.total}…`
+                : '正在导入…'
               : selectedPending.length
                 ? `导入 ${selectedPending.length} 个对话`
                 : '导入对话'}
@@ -178,12 +340,24 @@ export function SyncDialog({
         >
           {selectedPending.length === pending.length && pending.length ? '取消全选' : '全选未导入'}
         </button>
+        {hasMore || loadingAll ? (
+          <button
+            type="button"
+            className="ghost-btn"
+            title="把网页端剩下的历史一次读完"
+            onClick={() => void loadAll()}
+            disabled={loading || loadingAll || !hasMore}
+          >
+            {loadingAll ? <Loader2 size={13} className="spin" /> : <ChevronsDown size={13} />}
+            {loadingAll ? `已加载 ${sessions.length}` : '加载全部'}
+          </button>
+        ) : null}
         <button
           type="button"
           className="icon-btn"
           title="重新读取"
           onClick={() => void load()}
-          disabled={loading || importing}
+          disabled={loading || loadingAll || importing}
         >
           <RotateCw size={14} className={loading ? 'spin' : undefined} />
         </button>
@@ -196,7 +370,7 @@ export function SyncDialog({
       ) : null}
       {notice ? <div className="sync-notice">{notice}</div> : null}
 
-      <div className="sync-list">
+      <div className="sync-list" ref={listRef}>
         {loading && !sessions.length ? (
           <div className="sync-loading">
             <Loader2 size={16} className="spin" />
@@ -237,19 +411,29 @@ export function SyncDialog({
         })}
 
         {!loading && sessions.length > 0 && !filtered.length ? (
-          <div className="sync-empty">没有匹配「{query}」的对话。</div>
+          <div className="sync-empty">
+            没有匹配「{query}」的对话。
+            {hasMore ? <span className="sync-empty-hint">更早的对话还没加载，可以点上面的「加载全部」再搜。</span> : null}
+          </div>
         ) : null}
 
         {hasMore ? (
           <button
+            ref={moreRef}
             type="button"
             className="sync-more"
-            onClick={() => void load(cursor, true)}
-            disabled={loading}
+            onClick={() => void loadMore()}
+            disabled={loading || loadingAll}
           >
-            {loading ? <Loader2 size={13} className="spin" /> : null}
-            加载更早的对话
+            {loading || loadingAll ? <Loader2 size={13} className="spin" /> : null}
+            {loadingAll
+              ? `正在读完剩下的历史…（已加载 ${sessions.length}）`
+              : loading
+                ? '正在加载更早的对话…'
+                : '加载更早的对话'}
           </button>
+        ) : sessions.length ? (
+          <div className="sync-end">已经读到网页端的全部 {sessions.length} 个对话</div>
         ) : null}
       </div>
     </Dialog>

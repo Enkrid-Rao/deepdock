@@ -929,15 +929,23 @@ function mockReasoning() {
 }
 
 function mockContent(prompt) {
+  // Echo the first line only: slicing raw input mid-formula makes the demo
+  // reply look broken, and the quote is just there to prove the round-trip.
+  const firstLine = String(prompt).trim().split('\n')[0].trim()
+  const quoted = firstLine.slice(0, 60)
   return `这是 **DeepDock** 的本地演示回复（没有连接真实账号）。
 
-你刚才说：「${String(prompt).slice(0, 60)}」
+你刚才说：「${quoted}${firstLine.length > 60 ? '…' : ''}」
 
 连接真实账号之后，这里会显示 DeepSeek 的原文流式输出，支持 Markdown：
 
 - 列表、\`行内代码\`、表格
 - 代码块高亮
-- 数学公式 $E = mc^2$
+- 数学公式：\\(E = mc^2\\)、\\(\\nabla \\cdot \\mathbf{E} = \\frac{\\rho}{\\varepsilon_0}\\)
+
+\\[
+\\int_0^1 x^2 \\, dx = \\frac{1}{3}
+\\]
 
 \`\`\`ts
 // 一个很小的例子
