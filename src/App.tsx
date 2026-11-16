@@ -17,7 +17,9 @@ import {
   type Appearance,
 } from './lib/appearance'
 import { resolveMemoryRefs } from './lib/projects'
+import { useDraftAttachments } from './lib/attachments'
 import type {
+  Attachment,
   Bootstrap,
   Conversation,
   ConversationMeta,
@@ -144,6 +146,14 @@ export default function App() {
     window.setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2800)
   }, [])
 
+  const {
+    items: draftAttachments,
+    ready: readyAttachments,
+    addFiles,
+    remove: removeAttachment,
+    reset: resetDrafts,
+  } = useDraftAttachments(toast)
+
   /* ------------------------------------------------------------ theme */
 
   const dark = resolveTheme(appearance) === 'dark'
@@ -189,6 +199,7 @@ export default function App() {
       setActiveId(id)
       setDrawer(false)
       setDraft('')
+      resetDrafts()
       try {
         const conv = await api.getConversation(id)
         if (seq !== selectSeq.current) return
@@ -200,7 +211,7 @@ export default function App() {
         if (seq === selectSeq.current) toast('打开对话失败')
       }
     },
-    [toast],
+    [resetDrafts, toast],
   )
 
   const recoverAuth = useCallback(
@@ -279,6 +290,7 @@ export default function App() {
       } else if (mod && e.key.toLowerCase() === 'n') {
         e.preventDefault()
         setDraft('')
+        resetDrafts()
         setActiveId(null)
         setActiveConv(null)
       } else if (e.key === 'Escape') {
@@ -287,7 +299,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [resetDrafts])
 
   /* ------------------------------------------------------------ streaming */
 
@@ -329,10 +341,11 @@ export default function App() {
   const runStream = useCallback(
     async (
       conv: Conversation,
-      options: { regenerate?: boolean; text: string },
+      options: { regenerate?: boolean; text: string; attachments?: Attachment[] },
     ) => {
       const regenerate = Boolean(options.regenerate)
       const text = options.text.trim()
+      const attachments = options.attachments || []
       const convId = conv.id
 
       let base = conv.messages.filter((m) => !m.streaming)
@@ -341,7 +354,13 @@ export default function App() {
       }
 
       const now = Date.now()
-      const userMsg: Message = { id: uid(), role: 'user', content: text, createdAt: now }
+      const userMsg: Message = {
+        id: uid(),
+        role: 'user',
+        content: text,
+        createdAt: now,
+        ...(attachments.length ? { attachments } : {}),
+      }
       const asstMsg: Message = {
         id: uid(),
         role: 'assistant',
@@ -353,7 +372,7 @@ export default function App() {
       }
       const title =
         !regenerate && (conv.title === '新对话' || conv.messages.length === 0)
-          ? makeTitle(text)
+          ? makeTitle(text || attachments[0]?.name || '')
           : conv.title
 
       setActiveConv({
@@ -374,11 +393,11 @@ export default function App() {
       const controller = new AbortController()
       abortRef.current = controller
 
-      const settle = (patch: { error?: string | null }) => {
+      const settle = (patch: { error?: string | null; content?: string; reasoning?: string }) => {
         const s = streamRef.current
         if (s?.raf) cancelAnimationFrame(s.raf)
-        const content = s?.content ?? ''
-        const reasoning = s?.reasoning ?? ''
+        const content = patch.content ?? s?.content ?? ''
+        const reasoning = patch.reasoning ?? s?.reasoning ?? ''
         setActiveConv((prev) => {
           if (!prev || prev.id !== convId) return prev
           return {
@@ -396,7 +415,13 @@ export default function App() {
 
       await streamChat(
         convId,
-        { content: text, thinking, search, regenerate },
+        {
+          content: text,
+          thinking,
+          search,
+          regenerate,
+          attachments: attachments.map((item) => item.id),
+        },
         {
           onStart: (data) => {
             if (regenerate || !data.userMessage) return
@@ -414,7 +439,7 @@ export default function App() {
           onDelta: (delta) => pushDelta('content', delta),
           onReasoning: (delta) => pushDelta('reasoning', delta),
           onDone: (data) => {
-            settle({ error: null })
+            settle({ error: null, content: data.content, reasoning: data.reasoning })
             if (data.conversation) {
               setConversations((prev) =>
                 sortConversations(
@@ -444,7 +469,10 @@ export default function App() {
   const send = useCallback(async () => {
     if (streamingId) return
     const text = draft.trim()
-    if (!text) return
+    const files = readyAttachments
+      .map((item) => item.attachment)
+      .filter((item): item is Attachment => Boolean(item))
+    if (!text && !files.length) return
 
     let conv = activeConv
     if (!conv) {
@@ -459,8 +487,9 @@ export default function App() {
         return
       }
     }
-    await runStream(conv, { text })
-  }, [activeConv, draft, runStream, streamingId, toast])
+    resetDrafts()
+    await runStream(conv, { text, attachments: files })
+  }, [activeConv, draft, readyAttachments, resetDrafts, runStream, streamingId, toast])
 
   const regenerate = useCallback(async () => {
     if (streamingId || !activeConv) return
@@ -480,6 +509,7 @@ export default function App() {
       setDrawer(false)
       if (activeConv && activeConv.messages.length === 0 && activeConv.projectId === (projectId || null)) {
         setDraft('')
+        resetDrafts()
         return
       }
       try {
@@ -488,11 +518,12 @@ export default function App() {
         setActiveId(meta.id)
         setActiveConv({ ...meta, messages: [] })
         setDraft('')
+        resetDrafts()
       } catch {
         toast('创建对话失败')
       }
     },
-    [activeConv, streamingId, toast],
+    [activeConv, resetDrafts, streamingId, toast],
   )
 
   const renameConversation = useCallback(
@@ -890,6 +921,9 @@ export default function App() {
           syncingConversation={convSyncing}
           memoryRefs={memoryRefs}
           onOpenMemory={openMemoryForProject}
+          attachments={draftAttachments}
+          onAddFiles={addFiles}
+          onRemoveAttachment={removeAttachment}
         />
       </div>
 

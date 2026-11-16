@@ -43,11 +43,26 @@ export type MemoryRef = {
   file?: string
 }
 
+/** A file (image or document) that lives on the web account and/or locally. */
+export type Attachment = {
+  id: string
+  name: string
+  size: number
+  isImage: boolean
+  width?: number | null
+  height?: number | null
+  /** File name inside DeepDock's `data/attachments/` (uploads made here). */
+  localFile?: string | null
+  /** Signed web path for files imported from chat.deepseek.com. */
+  remotePath?: string | null
+}
+
 export type Message = {
   id: string
   role: Role
   content: string
   reasoning?: string
+  attachments?: Attachment[]
   createdAt: number
   streaming?: boolean
   error?: string | null

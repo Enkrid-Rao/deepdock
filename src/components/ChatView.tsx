@@ -15,6 +15,7 @@ import { Composer } from './Composer'
 import { MessageView } from './Message'
 import { Menu, WaveArt } from './ui'
 import { projectColor, type Conversation, type MemoryRef, type Message, type Project } from '../lib/types'
+import type { DraftAttachment } from '../lib/attachments'
 
 const QUICK_PROMPTS = [
   { icon: 'spark', text: '把这段代码改得更干净' },
@@ -46,6 +47,9 @@ export function ChatView({
   syncingConversation = false,
   memoryRefs = [],
   onOpenMemory,
+  attachments = [],
+  onAddFiles,
+  onRemoveAttachment,
 }: {
   conversation: Conversation | null
   projects: Project[]
@@ -69,6 +73,9 @@ export function ChatView({
   syncingConversation?: boolean
   memoryRefs?: MemoryRef[]
   onOpenMemory?: (projectId: string) => void
+  attachments?: DraftAttachment[]
+  onAddFiles: (files: FileList | File[] | null) => void
+  onRemoveAttachment: (key: string) => void
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
@@ -333,6 +340,9 @@ export function ChatView({
         onToggleSearch={onToggleSearch}
         memoryRefs={memoryRefs}
         onOpenMemory={onOpenMemory}
+        attachments={attachments}
+        onAddFiles={onAddFiles}
+        onRemoveAttachment={onRemoveAttachment}
       />
     </main>
   )

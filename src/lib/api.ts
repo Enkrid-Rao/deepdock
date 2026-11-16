@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   Bootstrap,
   Conversation,
   ConversationMeta,
@@ -128,20 +129,54 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ conversationId }),
     }),
+
+  /** Send the raw file to the local API, which uploads it to the web account. */
+  uploadAttachment: async (file: File): Promise<Attachment> => {
+    const res = await fetch('/api/attachments', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream',
+        'x-file-name': encodeURIComponent(file.name || 'file'),
+        'x-file-type': file.type || 'application/octet-stream',
+      },
+      body: file,
+    })
+    if (!res.ok) {
+      let payload: any = null
+      try {
+        payload = await res.json()
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(payload?.message || `上传失败（${res.status}）`, res.status, payload)
+    }
+    return (await res.json()) as Attachment
+  },
 }
 
 export type StreamHandlers = {
   onStart?: (data: { userMessage: Message | null; assistantId: string }) => void
   onDelta?: (text: string) => void
   onReasoning?: (text: string) => void
-  onDone?: (data: { assistantId: string; conversation: ConversationMeta }) => void
+  onDone?: (data: {
+    assistantId: string
+    conversation: ConversationMeta
+    content?: string
+    reasoning?: string
+  }) => void
   onError?: (message: string, code?: number | string | null) => void
   onAborted?: () => void
 }
 
 export async function streamChat(
   conversationId: string,
-  body: { content?: string; thinking: boolean; search: boolean; regenerate?: boolean },
+  body: {
+    content?: string
+    thinking: boolean
+    search: boolean
+    regenerate?: boolean
+    attachments?: string[]
+  },
   handlers: StreamHandlers,
   signal: AbortSignal,
 ): Promise<void> {

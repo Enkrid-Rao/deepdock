@@ -154,7 +154,7 @@ export class DeepSeek {
 
   /** Opens the SSE stream for a completion. Returns the raw fetch Response. */
   async completion(
-    { sessionId, parentMessageId, prompt, thinking = false, search = false, signal },
+    { sessionId, parentMessageId, prompt, thinking = false, search = false, refFileIds = [], signal },
     { retry = true } = {},
   ) {
     const targetPath = '/api/v0/chat/completion'
@@ -164,7 +164,7 @@ export class DeepSeek {
       parent_message_id: parentMessageId || null,
       model_type: null,
       prompt,
-      ref_file_ids: [],
+      ref_file_ids: Array.isArray(refFileIds) ? refFileIds : [],
       thinking_enabled: Boolean(thinking),
       search_enabled: Boolean(search),
       action: null,
@@ -215,6 +215,85 @@ export class DeepSeek {
     }
     return res
   }
+
+  /**
+   * Upload one attachment to the web account.
+   *
+   * The browser posts multipart/form-data to `/file/upload_file` with a PoW
+   * header for that target path plus `x-thinking-enabled` / `x-file-size`
+   * hints. Returns the file object (`id`, `status`, `file_name`, ...).
+   */
+  async uploadFile({ data, filename, mime = 'application/octet-stream', thinking = false, signal } = {}) {
+    if (!data || !data.length) throw new DeepSeekError('文件是空的', { code: 'EMPTY_FILE' })
+    const targetPath = '/api/v0/file/upload_file'
+    const powHeader = await this.solveChallenge(targetPath)
+
+    const form = new FormData()
+    form.append('file', new Blob([data], { type: mime }), filename)
+    const headers = this.headers({
+      extra: {
+        'x-ds-pow-response': powHeader,
+        'x-thinking-enabled': thinking ? '1' : '0',
+        'x-file-size': String(data.length),
+      },
+    })
+    // fetch() sets the multipart boundary itself; the JSON header would win.
+    delete headers['content-type']
+
+    let res
+    try {
+      res = await fetch(ORIGIN + targetPath, { method: 'POST', headers, body: form, signal })
+    } catch (err) {
+      if (err.name === 'AbortError') throw err
+      throw new DeepSeekError(`上传失败：${err.message}`, { code: 'network' })
+    }
+
+    const text = await res.text()
+    let json = null
+    try {
+      json = JSON.parse(text)
+    } catch {
+      /* not json */
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new DeepSeekError('登录状态已失效，请重新连接账号', {
+        code: 'unauthorized',
+        status: res.status,
+      })
+    }
+    if (!json) {
+      throw new DeepSeekError(`上传失败（HTTP ${res.status}）`, {
+        code: 'bad_response',
+        status: res.status,
+        raw: text.slice(0, 300),
+      })
+    }
+    if (json.code !== 0) {
+      throw new DeepSeekError(mapCodeMessage(json.code, json.msg, json.data?.biz_msg), {
+        code: json.code,
+        status: res.status,
+        bizCode: json.data?.biz_code,
+      })
+    }
+    if (json.data?.biz_code !== 0) {
+      throw new DeepSeekError(mapBizMessage(json.data?.biz_code, json.data?.biz_msg), {
+        code: json.data?.biz_code,
+        bizCode: json.data?.biz_code,
+        raw: json,
+      })
+    }
+    const info = json.data.biz_data
+    if (!info?.id) throw new DeepSeekError('上传失败：响应里没有文件 id', { code: 'no_file_id' })
+    return info
+  }
+
+  /** Metadata (status, signed_path, width/height, ...) for uploaded file ids. */
+  async fileInfo(ids = []) {
+    const clean = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean)
+    if (!clean.length) return { files: [] }
+    const query = new URLSearchParams({ file_ids: clean.join(',') })
+    return this.request(`/file/fetch_files?${query.toString()}`, { method: 'GET' })
+  }
 }
 
 function mapCodeMessage(code, msg, bizMsg) {
@@ -236,16 +315,30 @@ function mapBizMessage(bizCode, bizMsg) {
  *   { type: 'reasoning', delta }
  *   { type: 'content', delta }
  *   { type: 'finish' }
+ *   { type: 'final', content, reasoning }
  *
- * DeepSeek streams both incremental appends (which omit the fragment type) and
- * periodic full `fragments` snapshots. We keep a small fragment state so the
- * THINK / RESPONSE classification stays correct and snapshots never duplicate
- * text that was already emitted.
+ * DeepSeek streams JSON patches shaped `{ p, o, v }` (path / operation /
+ * value). Both fields are sticky: an event without `p` reuses the previous
+ * path, and an event without `o` reuses the previous operation; `BATCH`
+ * expands into a list of patches whose paths are prefixed with the batch path.
+ *
+ * Earlier versions guessed "this string is probably answer text" and appended
+ * everything to the current fragment. That leaks tool fragments ("搜索到 13 个
+ * 网页"), status writes ("FINISHED") and, when the current fragment is the
+ * RESPONSE one, the tail of the thinking block into the answer. Applying the
+ * patches to a local copy of the response object and reading only THINK /
+ * RESPONSE fragments keeps the two streams apart.
  */
 export async function* readCompletionStream(response, signal) {
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
-  const state = { messageId: null, fragments: new Map(), currentId: null, currentKind: null }
+  const state = {
+    data: {},
+    sticky: { op: 'SET', path: '' },
+    emitted: new Map(),
+    messageId: null,
+    finished: false,
+  }
 
   for await (const chunk of response.body) {
     if (signal?.aborted) break
@@ -274,130 +367,180 @@ export async function* readCompletionStream(response, signal) {
       } catch {
         continue
       }
-      yield* interpretEvent(evt, state, eventName)
+      yield* handleStreamEvent(evt, state, eventName)
     }
   }
+
+  yield* flushFragments(state)
   if (state.messageId) yield { type: 'meta', messageId: state.messageId, late: true }
+  if (!state.finished) yield { type: 'finish' }
+  yield {
+    type: 'final',
+    content: collectText(state, 'content'),
+    reasoning: collectText(state, 'reasoning'),
+  }
 }
 
 function fragmentKind(type) {
   const kind = String(type || '').toUpperCase()
-  if (kind.includes('THINK') || kind.includes('REASON')) return 'reasoning'
-  if (!kind || kind === 'TEXT' || kind === 'ANSWER' || kind.includes('RESPONSE')) return 'content'
+  if (kind === 'THINK' || kind === 'REASON' || kind === 'REASONING') return 'reasoning'
+  if (kind === 'RESPONSE' || kind === 'TEXT' || kind === 'ANSWER') return 'content'
   return null
 }
 
-function* applySnapshot(fragments, state) {
-  let lastId = null
-  let lastKind = null
-  for (const fragment of fragments) {
-    if (!fragment) continue
-    const id = fragment.id ?? `fragment-${lastId ?? fragments.length}`
-    const kind = fragmentKind(fragment.type)
-    lastId = id
-    lastKind = kind
-
-    if (!kind || fragment.hidden) continue
-    const text = typeof fragment.content === 'string' ? fragment.content : ''
-    const previous = state.fragments.get(id)?.content || ''
-    let delta = ''
-    if (text.startsWith(previous)) delta = text.slice(previous.length)
-    // A final snapshot may be a cleaned-up rewrite of what was streamed
-    // (e.g. "1+1 等于 2。" → "1加1等于2"). Keep the streamed text rather than
-    // appending the rewrite a second time.
-    state.fragments.set(id, { kind, content: text })
-    if (delta) yield { type: kind, delta }
-  }
-  if (lastId !== null) {
-    state.currentId = lastId
-    state.currentKind = lastKind
-  }
-}
-
-function* interpretEvent(evt, state, eventName = 'message') {
+function* handleStreamEvent(evt, state, eventName) {
   if (!evt || typeof evt !== 'object') return
 
-  // The title event carries a generated conversation title, not answer text.
-  if (eventName === 'title') return
-  if (eventName === 'ready' || eventName === 'update_session' || eventName === 'close') return
+  // Title / lifecycle frames are not part of the response patch stream.
+  if (eventName === 'title' || eventName === 'ready' || eventName === 'close') return
+  if (eventName === 'update_session') return
 
   if (eventName === 'error' || evt.type === 'error') {
     yield { type: 'error', message: evt.content || evt.message || 'DeepSeek 返回错误' }
     return
   }
 
-  // Token-usage heartbeat / finish markers.
-  if (evt.o === 'BATCH') return
-  if ((evt.o === 'SET' && evt.v === 'FINISHED') || (evt.p === 'status' && evt.v === 'FINISHED')) {
-    yield { type: 'finish' }
-    return
-  }
+  if (!('v' in evt)) return
 
-  const v = evt.v
-  const path = typeof evt.p === 'string' ? evt.p : ''
+  for (const patch of expandDelta(evt, state.sticky)) {
+    if (!patch.path) {
+      if (patch.op === 'SET' && patch.value && typeof patch.value === 'object') {
+        Object.assign(state.data, patch.value)
+      }
+    } else {
+      applyPatch(state.data, patch.path, patch.op, patch.value)
+    }
 
-  if (Array.isArray(v)) {
-    // Full fragment list for the current response.
-    yield* applySnapshot(v, state)
-    return
-  }
-
-  if (v && typeof v === 'object') {
-    const response = v.response || v
-    const id = response?.message_id || v.message_id
+    const id = state.data?.response?.message_id
     if (id && id !== state.messageId) {
       state.messageId = id
       yield { type: 'meta', messageId: id }
     }
-    if (Array.isArray(response?.fragments)) {
-      yield* applySnapshot(response.fragments, state)
-    } else if (typeof response?.thinking_content === 'string' && response.thinking_content) {
-      yield { type: 'reasoning', delta: response.thinking_content }
+
+    yield* flushFragments(state)
+
+    if (state.data?.response?.status === 'FINISHED' && !state.finished) {
+      state.finished = true
+      yield { type: 'finish' }
     }
+  }
+}
+
+/** Expand one SSE frame into flat `{ path, op, value }` patches. */
+function expandDelta(evt, sticky) {
+  const op = evt.o ?? sticky.op
+  const path = evt.p ?? sticky.path
+  sticky.op = op
+  sticky.path = path
+
+  if (op !== 'BATCH') return [{ path, op, value: evt.v }]
+
+  const sub = { op: 'SET', path: '' }
+  const patches = []
+  for (const item of Array.isArray(evt.v) ? evt.v : []) {
+    for (const patch of expandDelta(item, sub)) {
+      patches.push({ ...patch, path: path ? `${path}/${patch.path}` : patch.path })
+    }
+  }
+  return patches
+}
+
+const INDEX = /^-?\d+$/
+
+function applyPatch(root, path, op, value) {
+  const segments = path.split('/').filter(Boolean)
+  if (!segments.length) return
+
+  let node = root
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    node = stepInto(node, segments[i], INDEX.test(segments[i + 1]))
+    if (node === undefined) return
+  }
+
+  const last = segments[segments.length - 1]
+  if (Array.isArray(node)) {
+    const index = last === '-1' ? node.length - 1 : Number(last)
+    if (!Number.isInteger(index) || index < 0) return
+    node[index] = op === 'APPEND' ? appendValue(node[index], value) : value
     return
   }
 
-  if (typeof v === 'string' && v) {
-    const fragmentMatch = path.match(/^response\/fragments\/([^/]+)\/content$/)
-    if (fragmentMatch) {
-      const id = fragmentMatch[1] === '-1' ? state.currentId : fragmentMatch[1]
-      if (id == null) return
-      const current = state.fragments.get(id) || { kind: state.currentKind, content: '' }
-      if (evt.o === 'SET') {
-        const previous = current.content
-        current.content = v
-        state.fragments.set(id, current)
-        const delta = v.startsWith(previous) ? v.slice(previous.length) : v
-        if (delta && (current.kind === 'reasoning' || current.kind === 'content')) {
-          yield { type: current.kind, delta }
-        }
-      } else {
-        current.content += v
-        state.fragments.set(id, current)
-        if (current.kind === 'reasoning' || current.kind === 'content') {
-          yield { type: current.kind, delta: v }
-        }
-      }
-      return
-    }
+  if (!node || typeof node !== 'object') return
+  node[last] = op === 'APPEND' ? appendValue(node[last], value) : value
+}
 
-    if (/think|reason/i.test(path)) {
-      yield { type: 'reasoning', delta: v }
-      return
-    }
-
-    // Appends without a path belong to the fragment that was last announced.
-    if (state.currentId != null) {
-      const current = state.fragments.get(state.currentId) || { kind: state.currentKind, content: '' }
-      current.content += v
-      state.fragments.set(state.currentId, current)
-      if (current.kind === 'reasoning' || current.kind === 'content') {
-        yield { type: current.kind, delta: v }
-      }
-      return
-    }
-
-    yield { type: 'content', delta: v }
-    return
+function stepInto(node, segment, nextIsIndex) {
+  const empty = nextIsIndex ? [] : {}
+  if (Array.isArray(node)) {
+    const index = segment === '-1' ? node.length - 1 : Number(segment)
+    if (!Number.isInteger(index) || index < 0) return undefined
+    if (node[index] == null) node[index] = empty
+    return node[index]
   }
+  if (node && typeof node === 'object') {
+    if (node[segment] == null) node[segment] = empty
+    return node[segment]
+  }
+  return undefined
+}
+
+function appendValue(current, value) {
+  if (typeof current === 'string') return current + String(value ?? '')
+  if (Array.isArray(current)) return Array.isArray(value) ? current.concat(value) : [...current, value]
+  return current == null ? value : current
+}
+
+/** Emit the not-yet-streamed part of every THINK / RESPONSE fragment. */
+function* flushFragments(state) {
+  const response = state.data?.response
+  if (!response) return
+  const fragments = Array.isArray(response.fragments) ? response.fragments : []
+
+  let index = 0
+  let hasThinkingFragment = false
+  for (const fragment of fragments) {
+    const key = fragment?.id != null ? `id:${fragment.id}` : `at:${index}`
+    index += 1
+    if (!fragment || fragment.hidden) continue
+
+    const kind = fragmentKind(fragment.type)
+    if (kind === 'reasoning') hasThinkingFragment = true
+    if (!kind) continue
+
+    const text = typeof fragment.content === 'string' ? fragment.content : ''
+    const previous = state.emitted.get(key)
+    if (previous === undefined) {
+      state.emitted.set(key, text)
+      if (text) yield { type: kind, delta: text }
+      continue
+    }
+    if (text === previous) continue
+    if (text.startsWith(previous)) {
+      state.emitted.set(key, text)
+      const delta = text.slice(previous.length)
+      if (delta) yield { type: kind, delta }
+    }
+    // A non-prefix rewrite (the server sometimes cleans up a fragment at the
+    // end) is ignored here; `final` carries the authoritative text.
+  }
+
+  // Non-thinking payloads can carry the whole reasoning block as one field.
+  if (!hasThinkingFragment && typeof response.thinking_content === 'string' && response.thinking_content) {
+    const text = response.thinking_content
+    const previous = state.emitted.get('thinking_content') || ''
+    if (text !== previous && text.startsWith(previous)) {
+      state.emitted.set('thinking_content', text)
+      const delta = text.slice(previous.length)
+      if (delta) yield { type: 'reasoning', delta }
+    }
+  }
+}
+
+function collectText(state, kind) {
+  const fragments = state.data?.response?.fragments
+  if (!Array.isArray(fragments)) return ''
+  return fragments
+    .filter((fragment) => fragment && !fragment.hidden && fragmentKind(fragment.type) === kind)
+    .map((fragment) => (typeof fragment.content === 'string' ? fragment.content : ''))
+    .join('')
 }

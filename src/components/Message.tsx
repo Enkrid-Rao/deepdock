@@ -3,7 +3,8 @@ import { AlertCircle, Brain, FileText, RotateCw } from 'lucide-react'
 import { Markdown } from './Markdown'
 import { CopyButton } from './ui'
 import { formatChars } from '../lib/projects'
-import type { Message } from '../lib/types'
+import { attachmentUrl, formatBytes } from '../lib/attachments'
+import type { Attachment, Message } from '../lib/types'
 
 function useStreamText(value: string, active: boolean, ms = 110) {
   const [shown, setShown] = useState(value)
@@ -63,6 +64,60 @@ function Reasoning({ text, streaming }: { text: string; streaming: boolean }) {
   )
 }
 
+function AttachmentCard({ item }: { item: Attachment }) {
+  const url = attachmentUrl(item)
+  if (item.isImage) {
+    return (
+      <a
+        className="attach-image"
+        href={url || undefined}
+        target="_blank"
+        rel="noreferrer"
+        title={item.name}
+        data-missing={url ? undefined : 'true'}
+      >
+        {url ? <img src={url} alt={item.name} loading="lazy" /> : <FileText size={16} />}
+        <span className="attach-caption">{item.name}</span>
+      </a>
+    )
+  }
+
+  const body = (
+    <>
+      <span className="attach-icon">
+        <FileText size={16} />
+      </span>
+      <span className="attach-main">
+        <span className="attach-name" title={item.name}>
+          {item.name}
+        </span>
+        <span className="attach-meta">{formatBytes(item.size)}</span>
+      </span>
+    </>
+  )
+
+  return url ? (
+    <a className="attach-file" href={url} target="_blank" rel="noreferrer" title={`打开 ${item.name}`}>
+      {body}
+    </a>
+  ) : (
+    <span className="attach-file" title={item.name}>
+      {body}
+    </span>
+  )
+}
+
+function Attachments({ items }: { items: Attachment[] }) {
+  if (!items.length) return null
+  return (
+    <div className="msg-attachments">
+      {items.map((item) => (
+        <AttachmentCard key={item.id} item={item} />
+      ))}
+    </div>
+  )
+}
+
 export const MessageView = memo(function MessageView({
   message,
   onRegenerate,
@@ -93,7 +148,8 @@ export const MessageView = memo(function MessageView({
           </div>
         ) : null}
         <div className="bubble">
-          <Markdown content={message.content} variant="user" />
+          {message.attachments?.length ? <Attachments items={message.attachments} /> : null}
+          {message.content.trim() ? <Markdown content={message.content} variant="user" /> : null}
         </div>
         <div className="msg-actions">
           <CopyButton text={message.content} title="复制" />
@@ -122,6 +178,8 @@ export const MessageView = memo(function MessageView({
       </div>
 
       <Reasoning text={reasoning} streaming={streaming} />
+
+      {message.attachments?.length ? <Attachments items={message.attachments} /> : null}
 
       {empty && streaming ? (
         <div className="typing" aria-label="正在生成">

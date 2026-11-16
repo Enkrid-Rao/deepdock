@@ -354,6 +354,171 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
     }),
   )
 
+  // ----------------------------------------------------------- attachments
+
+  const ATTACHMENTS_DIR = path.join(dataDir, 'attachments')
+  await fs.promises.mkdir(ATTACHMENTS_DIR, { recursive: true })
+
+  const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
+  const MAX_ATTACHMENTS = 50
+  const UPLOAD_READY_TIMEOUT = 90_000
+  const FILES_ORIGIN = 'https://files.deepseeksvc.com'
+  const uploadedAttachments = new Map()
+
+  function sanitizeFileName(input) {
+    const base = path.basename(String(input || 'file')).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+    const trimmed = base.trim().slice(0, 160)
+    return trimmed || 'file'
+  }
+
+  function fileParseError(file) {
+    const status = String(file?.status || '').toUpperCase()
+    if (file?.audit_result === 'reject') return '这个文件没有通过内容审核。'
+    if (status === 'CONTENT_EMPTY') return '文件里没有可读取的内容，换一个试试。'
+    if (status === 'CONTENT_TOO_LONG') return '文件太长了，超出了模型的上下文。'
+    if (status === 'FAILED' || status === 'CANCELLED') return '文件解析失败，换一个试试。'
+    return '文件处理失败，换一个试试。'
+  }
+
+  function sizeOrNull(value) {
+    if (value === null || value === undefined || value === '') return null
+    return Number.isFinite(Number(value)) ? Number(value) : null
+  }
+
+  function attachmentFromFile(info, fallback = {}) {
+    const name = String(info?.file_name || fallback.name || '附件')
+    const size = Number(info?.file_size) || Number(fallback.size) || 0
+    return {
+      id: String(info.id),
+      name,
+      size,
+      isImage: Boolean(info.is_image),
+      width: sizeOrNull(info.width),
+      height: sizeOrNull(info.height),
+      remotePath: info.signed_path || null,
+      audit: info.audit_result || null,
+    }
+  }
+
+  /** Block until DeepSeek finishes parsing the uploaded file. */
+  async function waitForAttachment(id) {
+    const started = Date.now()
+    while (Date.now() - started < UPLOAD_READY_TIMEOUT) {
+      const data = await deepseek.fileInfo([id]).catch(() => null)
+      const file = data?.files?.find((item) => String(item.id) === String(id))
+      if (file) {
+        const status = String(file.status || '').toUpperCase()
+        if (status === 'SUCCESS') return file
+        if (status && !['PENDING', 'PARSING', 'WIP', ''].includes(status)) {
+          throw new DeepSeekError(fileParseError(file), { code: 'FILE_PARSE_FAILED', status })
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    }
+    throw new DeepSeekError('文件解析超时，请稍后再试。', { code: 'FILE_TIMEOUT' })
+  }
+
+  app.post(
+    '/api/attachments',
+    express.raw({ type: () => true, limit: MAX_ATTACHMENT_BYTES }),
+    wrap(async (req, res) => {
+      if (!credentials.connected && !mock) {
+        return res.status(401).json({ error: 'NOT_CONNECTED', message: '请先连接 DeepSeek 账号。' })
+      }
+      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+      if (!data.length) return res.status(400).json({ error: 'EMPTY', message: '文件是空的。' })
+
+      let name = 'file'
+      try {
+        name = sanitizeFileName(decodeURIComponent(String(req.get('x-file-name') || 'file')))
+      } catch {
+        name = sanitizeFileName(req.get('x-file-name'))
+      }
+      const mime = String(req.get('x-file-type') || 'application/octet-stream')
+      const thinking = req.get('x-thinking') === '1'
+
+      try {
+        let info
+        if (mock) {
+          info = {
+            id: `mock-file-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`,
+            file_name: name,
+            file_size: data.length,
+            status: 'SUCCESS',
+            is_image: mime.startsWith('image/'),
+            width: null,
+            height: null,
+            audit_result: 'pass',
+          }
+          await new Promise((resolve) => setTimeout(resolve, 350))
+        } else {
+          info = await uploadRemoteFile({ data, name, mime, thinking })
+        }
+
+        const ext = path.extname(name).slice(1).toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin'
+        const localFile = `${info.id}.${ext}`
+        await fs.promises.writeFile(path.join(ATTACHMENTS_DIR, localFile), data)
+
+        const attachment = { ...attachmentFromFile(info, { name, size: data.length }), localFile }
+        uploadedAttachments.set(attachment.id, attachment)
+        res.json(attachment)
+      } catch (err) {
+        if (err.code === 40003 || err.code === 'unauthorized' || err.code === 40002) {
+          return res.status(401).json({ error: 'SESSION_EXPIRED', message: '登录已失效，请重新连接账号。' })
+        }
+        res.status(502).json({ error: 'UPLOAD_FAILED', message: err.message || '上传失败，请稍后再试。' })
+      }
+    }),
+  )
+
+  async function uploadRemoteFile({ data, name, mime, thinking }) {
+    const info = await deepseek.uploadFile({ data, filename: name, mime, thinking })
+    if (String(info?.status || '').toUpperCase() === 'SUCCESS') return info
+    return waitForAttachment(info.id)
+  }
+
+  /** Proxy an image that only exists on the web account's file CDN. */
+  app.get(
+    '/api/attachments/remote',
+    wrap(async (req, res) => {
+      const signed = String(req.query.path || '')
+      if (!signed.startsWith('/file?') || signed.includes('://') || signed.length > 4000) {
+        return res.status(400).end()
+      }
+      try {
+        const upstream = await fetch(`${FILES_ORIGIN}/api${signed}&ty=p`, {
+          headers: {
+            'user-agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+            referer: 'https://chat.deepseek.com/',
+          },
+        })
+        if (!upstream.ok || !upstream.body) return res.status(502).end()
+        res.setHeader('content-type', upstream.headers.get('content-type') || 'application/octet-stream')
+        res.setHeader('cache-control', 'private, max-age=86400')
+        res.end(Buffer.from(await upstream.arrayBuffer()))
+      } catch {
+        res.status(502).end()
+      }
+    }),
+  )
+
+  app.get(
+    '/api/attachments/:file',
+    wrap(async (req, res) => {
+      const name = path.basename(String(req.params.file))
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) return res.status(400).end()
+      const full = path.join(ATTACHMENTS_DIR, name)
+      if (!full.startsWith(`${ATTACHMENTS_DIR}${path.sep}`)) return res.status(400).end()
+      try {
+        await fs.promises.access(full)
+      } catch {
+        return res.status(404).end()
+      }
+      res.sendFile(full)
+    }),
+  )
+
   // ----------------------------------------------------------------- chat
 
   const activeStreams = new Map()
@@ -387,6 +552,21 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
       let parentOverride = null
       let memory = null
 
+      // Attachments arrive as ids of files uploaded through /api/attachments.
+      const requestedIds = Array.isArray(body.attachments)
+        ? [...new Set(body.attachments.map((id) => String(id || '')).filter(Boolean))]
+        : []
+      if (requestedIds.length > MAX_ATTACHMENTS) {
+        return res.status(400).json({ error: 'TOO_MANY_FILES', message: `一次最多带 ${MAX_ATTACHMENTS} 个文件。` })
+      }
+      let attachments = requestedIds.map((id) => uploadedAttachments.get(id)).filter(Boolean)
+      if (attachments.length !== requestedIds.length) {
+        return res.status(400).json({
+          error: 'ATTACHMENT_EXPIRED',
+          message: '有附件已经失效，请重新添加一次。',
+        })
+      }
+
       const existing = await store.getConversation(convId)
 
       if (regenerate) {
@@ -402,11 +582,13 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
         if (!lastUser) return res.status(400).json({ error: 'NOTHING_TO_REGENERATE' })
         prompt = lastUser.content
         userMessage = lastUser
+        // Re-use the files that the user message was originally sent with.
+        attachments = Array.isArray(lastUser.attachments) ? lastUser.attachments : []
         // The new reply must hang off the message *before* the one we removed.
         const previousAssistant = [...existing.messages].reverse().find((m) => m.role === 'assistant')
         parentOverride = previousAssistant?.dsMessageId || null
       } else {
-        if (!prompt) return res.status(400).json({ error: 'EMPTY_PROMPT' })
+        if (!prompt && !attachments.length) return res.status(400).json({ error: 'EMPTY_PROMPT' })
         // Project memory is a first-message prompt prefix, never part of the
         // typed content. The UI only renders a reference chip.
         if (!existing.messages.length) {
@@ -419,10 +601,13 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
         userMessage = await store.addMessage(convId, {
           role: 'user',
           content: prompt,
+          ...(attachments.length ? { attachments } : {}),
           ...(memory?.refs?.length ? { memoryRefs: memory.refs } : {}),
         })
         if (meta.messageCount <= 1 && (!meta.title || meta.title === '新对话')) {
-          await store.updateConversation(convId, { title: titleFrom(prompt) })
+          await store.updateConversation(convId, {
+            title: titleFrom(prompt || attachments[0]?.name || ''),
+          })
         }
         if (!meta.parentMessageId) {
           const previousAssistant = [...existing.messages].reverse().find((m) => m.role === 'assistant')
@@ -430,7 +615,8 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
         }
       }
 
-      const upstreamPrompt = memory ? `${memory.text}${prompt}` : prompt
+      const refFileIds = attachments.map((item) => item.id).filter(Boolean)
+      const upstreamPrompt = memory ? `${memory.text}${prompt}` : prompt || '请看附件'
 
       const assistant = await store.addMessage(convId, {
         role: 'assistant',
@@ -499,6 +685,7 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
             prompt: upstreamPrompt,
             thinking,
             search,
+            refFileIds,
             signal: controller.signal,
           })
 
@@ -513,6 +700,11 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
               upstreamMessageId = evt.messageId
             } else if (evt.type === 'finish') {
               finished = true
+            } else if (evt.type === 'final') {
+              // Authoritative text read from the patched fragments; the streamed
+              // deltas might have been rewritten upstream along the way.
+              if (typeof evt.content === 'string') content = evt.content
+              if (typeof evt.reasoning === 'string') reasoning = evt.reasoning
             } else if (evt.type === 'error') {
               throw new DeepSeekError(evt.message, { code: 'UPSTREAM' })
             }
@@ -552,7 +744,7 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
       }
 
       cleanup()
-      send('done', { assistantId: assistant.id, conversation: store.getMeta(convId) })
+      send('done', { assistantId: assistant.id, conversation: store.getMeta(convId), content, reasoning })
       if (!res.writableEnded) res.end()
     }),
   )
@@ -819,8 +1011,11 @@ npm start</pre>
   })
 
   app.use((err, req, res, next) => {
-    console.error('[deepdock]', err)
     if (res.headersSent) return next(err)
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'TOO_LARGE', message: '文件太大了（上限 100 MB）。' })
+    }
+    console.error('[deepdock]', err)
     res.status(500).json({ error: 'INTERNAL', message: err.message })
   })
 

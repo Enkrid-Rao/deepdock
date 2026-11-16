@@ -16,6 +16,27 @@ function fragmentText(fragments, types) {
     .join('')
 }
 
+/** Files attached to a message live in FILE fragments as a `files` array. */
+function fileAttachments(fragments) {
+  const attachments = []
+  for (const fragment of fragments) {
+    if (!fragment || String(fragment.type || '').toUpperCase() !== 'FILE') continue
+    for (const file of Array.isArray(fragment.files) ? fragment.files : []) {
+      if (!file?.id) continue
+      attachments.push({
+        id: String(file.id),
+        name: String(file.file_name || '附件'),
+        size: Number(file.file_size) || 0,
+        isImage: Boolean(file.is_image),
+        width: Number.isFinite(Number(file.width)) ? Number(file.width) : null,
+        height: Number.isFinite(Number(file.height)) ? Number(file.height) : null,
+        remotePath: typeof file.signed_path === 'string' ? file.signed_path : null,
+      })
+    }
+  }
+  return attachments
+}
+
 function numericId(message) {
   const value = Number(message?.message_id)
   return Number.isFinite(value) ? value : 0
@@ -35,16 +56,18 @@ export function convertRemoteHistory(history, session = {}) {
     const role = String(message?.role || '').toUpperCase() === 'USER' ? 'user' : 'assistant'
     const fragments = Array.isArray(message?.fragments) ? message.fragments : []
     const types = fragments.map((fragment) => String(fragment?.type || '').toUpperCase())
+    const attachments = fileAttachments(fragments)
     const attachment = types.includes('FILE')
     if (attachment) hasAttachment = true
 
     if (role === 'user') {
       const text = fragmentText(fragments, ['REQUEST']).trim()
-      const content = text || (attachment ? ATTACHMENT_PLACEHOLDER : '')
-      if (!content) continue
+      const content = text || (attachment && !attachments.length ? ATTACHMENT_PLACEHOLDER : '')
+      if (!content && !attachments.length) continue
       messages.push({
         role,
         content,
+        ...(attachments.length ? { attachments } : {}),
         createdAt: Math.round(Number(message.inserted_at || 0) * 1000) || Date.now(),
         dsMessageId: String(message.message_id ?? '') || null,
         thinking: Boolean(message.thinking_enabled),
@@ -60,6 +83,7 @@ export function convertRemoteHistory(history, session = {}) {
       role,
       content,
       reasoning,
+      ...(attachments.length ? { attachments } : {}),
       createdAt: Math.round(Number(message.inserted_at || 0) * 1000) || Date.now(),
       dsMessageId: String(message.message_id ?? '') || null,
       thinking: Boolean(message.thinking_enabled),

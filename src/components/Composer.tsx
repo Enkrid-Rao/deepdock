@@ -1,6 +1,7 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react'
-import { ArrowUp, Brain, FileText, Globe, Square } from 'lucide-react'
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { ArrowUp, Brain, FileText, Globe, Loader2, Paperclip, Square, X } from 'lucide-react'
 import { formatChars } from '../lib/projects'
+import { formatBytes, type DraftAttachment } from '../lib/attachments'
 import type { MemoryRef } from '../lib/types'
 
 export function Composer({
@@ -15,6 +16,9 @@ export function Composer({
   onToggleSearch,
   memoryRefs = [],
   onOpenMemory,
+  attachments = [],
+  onAddFiles,
+  onRemoveAttachment,
 }: {
   draft: string
   onDraftChange: (value: string) => void
@@ -27,8 +31,13 @@ export function Composer({
   onToggleSearch: () => void
   memoryRefs?: MemoryRef[]
   onOpenMemory?: (projectId: string) => void
+  attachments?: DraftAttachment[]
+  onAddFiles: (files: FileList | File[] | null) => void
+  onRemoveAttachment: (key: string) => void
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
 
   useEffect(() => {
     const el = ref.current
@@ -45,11 +54,39 @@ export function Composer({
     if (!streaming) onSend()
   }
 
-  const canSend = draft.trim().length > 0 && !streaming
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData?.files || [])
+    if (!files.length) return
+    e.preventDefault()
+    onAddFiles(files)
+  }
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    if (!streaming) setDragging(true)
+  }
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer?.files?.length) return
+    e.preventDefault()
+    setDragging(false)
+    if (!streaming) onAddFiles(e.dataTransfer.files)
+  }
+
+  const ready = attachments.filter((item) => item.status === 'ready')
+  const uploading = attachments.some((item) => item.status === 'uploading')
+  const canSend = (draft.trim().length > 0 || ready.length > 0) && !streaming && !uploading
 
   return (
     <div className="composer-wrap">
-      <div className="composer">
+      <div
+        className="composer"
+        data-drag={dragging}
+        onDragOver={handleDragOver}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+      >
         {memoryRefs.length ? (
           <div className="composer-refs">
             {memoryRefs.map((ref) => (
@@ -68,6 +105,40 @@ export function Composer({
             <span className="ref-note">仅第一条消息引用</span>
           </div>
         ) : null}
+
+        {attachments.length ? (
+          <div className="composer-files">
+            {attachments.map((item) => (
+              <div className="composer-file" key={item.key} data-status={item.status}>
+                {item.isImage && item.previewUrl ? (
+                  <img className="composer-file-thumb" src={item.previewUrl} alt="" />
+                ) : (
+                  <span className="composer-file-icon">
+                    <FileText size={15} />
+                  </span>
+                )}
+                <span className="composer-file-main">
+                  <span className="composer-file-name" title={item.name}>
+                    {item.name}
+                  </span>
+                  <span className="composer-file-meta">
+                    {item.status === 'uploading' ? <Loader2 size={10} className="spin" /> : null}
+                    {item.status === 'error' ? item.error || '上传失败' : formatBytes(item.size)}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className="composer-file-x"
+                  title="移除"
+                  onClick={() => onRemoveAttachment(item.key)}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         <textarea
           ref={ref}
           rows={1}
@@ -75,9 +146,30 @@ export function Composer({
           placeholder="给 DeepSeek 发消息…"
           onChange={(e) => onDraftChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           spellCheck={false}
         />
         <div className="composer-bar">
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              onAddFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            className="chip"
+            onClick={() => fileRef.current?.click()}
+            disabled={streaming}
+            title="添加图片或文件（也可以直接粘贴 / 拖进来）"
+          >
+            <Paperclip size={13} />
+            附件
+          </button>
           <button
             type="button"
             className="chip"
@@ -101,9 +193,15 @@ export function Composer({
             联网搜索
           </button>
           <span className="composer-hint">
-            <kbd>Enter</kbd> 发送
-            <span style={{ opacity: 0.5 }}>·</span>
-            <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行
+            {uploading ? (
+              '附件上传中…'
+            ) : (
+              <>
+                <kbd>Enter</kbd> 发送
+                <span style={{ opacity: 0.5 }}>·</span>
+                <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行
+              </>
+            )}
           </span>
           {streaming ? (
             <button type="button" className="send stop" onClick={onStop} title="停止生成">

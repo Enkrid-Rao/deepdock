@@ -358,6 +358,9 @@ export class Store {
       createdAt: Number(message.createdAt) || now,
       role: message.role === 'user' ? 'user' : 'assistant',
       content: String(message.content || ''),
+      ...(Array.isArray(message.attachments) && message.attachments.length
+        ? { attachments: message.attachments }
+        : {}),
       ...(message.reasoning ? { reasoning: String(message.reasoning) } : {}),
       ...(message.dsMessageId ? { dsMessageId: String(message.dsMessageId) } : {}),
       ...(message.thinking ? { thinking: true } : {}),
@@ -397,7 +400,12 @@ export class Store {
     if (this.cache.has(id)) return this.cache.get(id)
     const data = await readJson(this.convFile(id), { id, messages: [] })
     data.messages ||= []
+    let repaired = false
+    for (const message of data.messages) {
+      if (stripThinkingLeak(message)) repaired = true
+    }
     this.cache.set(id, data)
+    if (repaired) await this.saveConversation(id)
     return data
   }
 
@@ -504,6 +512,9 @@ export class Store {
         createdAt: Number(message.createdAt) || Date.now(),
         role: message.role === 'user' ? 'user' : 'assistant',
         content: String(message.content || ''),
+        ...(Array.isArray(message.attachments) && message.attachments.length
+          ? { attachments: message.attachments }
+          : {}),
         ...(message.reasoning ? { reasoning: String(message.reasoning) } : {}),
         ...(message.dsMessageId ? { dsMessageId: String(message.dsMessageId) } : {}),
         ...(message.thinking ? { thinking: true } : {}),
@@ -525,6 +536,52 @@ export class Store {
     await this.saveIndex()
     return appended
   }
+}
+
+/**
+ * Older builds could replay the tail of the thinking block into the answer when
+ * a fragment snapshot arrived mid-stream (and sometimes dropped a few words or
+ * leaked a status token like FINISHED into it). The answer therefore starts
+ * with a mangled copy of a suffix of `reasoning`; walk that copy chunk by chunk
+ * and cut it off. Returns true when the message was repaired.
+ */
+function stripThinkingLeak(message) {
+  if (!message || message.role !== 'assistant') return false
+  const reasoning = String(message.reasoning || '')
+  const content = String(message.content || '')
+  if (reasoning.length < 200 || content.length < 120) return false
+
+  const start = reasoning.indexOf(content.slice(0, 36))
+  if (start < 0) return false
+  const tail = reasoning.slice(start)
+  if (tail.length < 100) return false
+
+  const SIZE = 32
+  let cursor = 0
+  let matched = 0
+  let misses = 0
+  let reachedEnd = false
+
+  for (let i = 0; i < tail.length; i += SIZE) {
+    const chunk = tail.slice(i, i + SIZE)
+    const at = content.indexOf(chunk, cursor)
+    if (at < 0 || at > cursor + 48) {
+      misses += 1
+      if (misses > 2) break
+      continue
+    }
+    cursor = at + chunk.length
+    matched += chunk.length
+    misses = 0
+    if (i + SIZE >= tail.length) reachedEnd = true
+  }
+
+  if (!reachedEnd || matched < 120 || matched < tail.length * 0.6) return false
+
+  const rest = content.slice(cursor).replace(/^\s+/, '')
+  if (rest.length < 20) return false
+  message.content = rest
+  return true
 }
 
 function previewOf(messages) {
