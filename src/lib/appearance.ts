@@ -7,7 +7,14 @@
 export type AppearanceMode = 'light' | 'dark' | 'system'
 export type LightPalette = 'paper' | 'porcelain' | 'mist' | 'sage'
 export type DarkPalette = 'noir' | 'ember' | 'slate' | 'forest'
-export type AccentKey = 'emerald' | 'ocean' | 'violet' | 'amber' | 'rose' | 'cyan'
+export type AccentKey =
+  | 'emerald'
+  | 'ocean'
+  | 'deepsea'
+  | 'violet'
+  | 'amber'
+  | 'rose'
+  | 'cyan'
 export type MotionPref = 'full' | 'reduced'
 
 export type Appearance = {
@@ -18,6 +25,10 @@ export type Appearance = {
   serif: boolean
   grain: boolean
   motion: MotionPref
+  /** Custom UI font family (null = the web-matching default stack). */
+  uiFont: string | null
+  /** Custom code font family (null = JetBrains Mono first). */
+  codeFont: string | null
 }
 
 export const APPEARANCE_KEY = 'deepdock:appearance'
@@ -31,6 +42,55 @@ export const DEFAULT_APPEARANCE: Appearance = {
   serif: true,
   grain: true,
   motion: 'full',
+  uiFont: null,
+  codeFont: null,
+}
+
+/**
+ * Font stacks. The UI default mirrors chat.deepseek.com: Inter first, then the
+ * platform sans (with CJK fallbacks); code defaults to JetBrains Mono, which is
+ * what the web front-end ships for code blocks.
+ */
+export const UI_FONT_FALLBACK =
+  'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif'
+export const CODE_FONT_FALLBACK = 'ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace'
+export const UI_FONT_DEFAULT = `Inter, ${UI_FONT_FALLBACK}`
+export const CODE_FONT_DEFAULT = `"JetBrains Mono", ${CODE_FONT_FALLBACK}`
+
+export type FontPreset = { key: string; name: string; hint: string; stack: string }
+
+export const UI_FONT_PRESETS: FontPreset[] = [
+  { key: 'web', name: '网页同款', hint: 'Inter + 系统字体', stack: UI_FONT_DEFAULT },
+  {
+    key: 'system',
+    name: '系统默认',
+    hint: '跟随操作系统的界面字体',
+    stack: 'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+  },
+  {
+    key: 'inter',
+    name: '只用 Inter',
+    hint: '网页字体，中文回落系统',
+    stack: 'Inter, "Segoe UI", "Microsoft YaHei UI", sans-serif',
+  },
+]
+
+export const CODE_FONT_PRESETS: FontPreset[] = [
+  { key: 'jetbrains', name: 'JetBrains Mono', hint: '网页端代码字体', stack: CODE_FONT_DEFAULT },
+  { key: 'consolas', name: 'Consolas', hint: 'Windows 自带', stack: 'Consolas, "Courier New", monospace' },
+  {
+    key: 'cascadia',
+    name: 'Cascadia Code',
+    hint: 'Windows Terminal 字体',
+    stack: '"Cascadia Code", Consolas, monospace',
+  },
+]
+
+/** Keep user input from breaking out of the CSS custom property. */
+export function sanitizeFontFamily(input: unknown): string | null {
+  if (typeof input !== 'string') return null
+  const clean = input.replace(/[;{}<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 160)
+  return clean || null
 }
 
 export type PalettePreview = {
@@ -96,12 +156,12 @@ export const DARK_PALETTES: PalettePreview[] = [
   {
     key: 'noir',
     name: '现代黑',
-    hint: '近黑底 + 分层灰面',
-    bg: '#08090b',
-    panel: '#161a21',
-    surface: '#1e232b',
-    ink: '#f0f2f6',
-    line: '#313842',
+    hint: '对齐 DeepSeek 网页端的深色',
+    bg: '#151517',
+    panel: '#1b1b1c',
+    surface: '#232324',
+    ink: '#f9fafb',
+    line: '#2f3032',
     accent: '#57e0bd',
   },
   {
@@ -142,6 +202,7 @@ export const DARK_PALETTES: PalettePreview[] = [
 export const ACCENTS: { key: AccentKey; name: string; light: string; dark: string }[] = [
   { key: 'emerald', name: '翡翠', light: '#0e5c4d', dark: '#57e0bd' },
   { key: 'ocean', name: '海蓝', light: '#1d5fa8', dark: '#7db8f0' },
+  { key: 'deepsea', name: '深坞蓝', light: '#3964fe', dark: '#5686fe' },
   { key: 'cyan', name: '青', light: '#0b6b78', dark: '#5fd6e4' },
   { key: 'violet', name: '紫罗兰', light: '#6d3bbf', dark: '#b79cf5' },
   { key: 'amber', name: '琥珀', light: '#9a5b00', dark: '#f0bc63' },
@@ -188,6 +249,8 @@ export function normalizeAppearance(input: unknown): Appearance {
     serif: value.serif !== false,
     grain: value.grain !== false,
     motion: value.motion === 'reduced' ? 'reduced' : 'full',
+    uiFont: sanitizeFontFamily(value.uiFont),
+    codeFont: sanitizeFontFamily(value.codeFont),
   }
 }
 
@@ -234,6 +297,13 @@ export function applyAppearance(appearance: Appearance): { dark: boolean; backgr
   root.dataset.grain = appearance.grain ? 'on' : 'off'
   root.dataset.motion = appearance.motion
   root.style.colorScheme = dark ? 'dark' : 'light'
+
+  const uiFont = sanitizeFontFamily(appearance.uiFont)
+  const codeFont = sanitizeFontFamily(appearance.codeFont)
+  if (uiFont) root.style.setProperty('--font-ui', `${uiFont}, ${UI_FONT_FALLBACK}`)
+  else root.style.removeProperty('--font-ui')
+  if (codeFont) root.style.setProperty('--font-mono', `${codeFont}, ${CODE_FONT_FALLBACK}`)
+  else root.style.removeProperty('--font-mono')
 
   const bridge = (window as unknown as { deepdockDesktop?: DesktopThemeBridge }).deepdockDesktop
   try {

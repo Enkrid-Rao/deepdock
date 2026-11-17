@@ -24,6 +24,24 @@
           root.dataset.grain = saved && saved.grain === false ? 'off' : 'on'
           root.dataset.motion = saved && saved.motion === 'reduced' ? 'reduced' : 'full'
           root.style.colorScheme = dark ? 'dark' : 'light'
+
+          // Custom fonts are applied before the first paint (React repeats this).
+          var uiFont = saved && typeof saved.uiFont === 'string' ? saved.uiFont.replace(/[;{}<>]/g, '').trim() : ''
+          if (uiFont) {
+            root.style.setProperty(
+              '--font-ui',
+              uiFont +
+                ', system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+            )
+          }
+          var codeFont =
+            saved && typeof saved.codeFont === 'string' ? saved.codeFont.replace(/[;{}<>]/g, '').trim() : ''
+          if (codeFont) {
+            root.style.setProperty(
+              '--font-mono',
+              codeFont + ', ui-monospace, Consolas, "Courier New", monospace',
+            )
+          }
         } catch (e) {}
       })()
     </script>

@@ -7,7 +7,7 @@ import {
   FolderPlus,
   Moon,
   MoreHorizontal,
-  Palette,
+  Settings,
   Pencil,
   Pin,
   PinOff,
@@ -53,7 +53,7 @@ type Actions = {
   pinConversation: (conv: ConversationMeta) => void
   account: (action: 'refresh' | 'reconnect' | 'disconnect' | 'dataFolder' | 'checkUpdates') => void
   sync: () => void
-  appearance: () => void
+  settings: () => void
 }
 
 export function Sidebar({
@@ -560,10 +560,10 @@ export function Sidebar({
                 className="menu-item"
                 onClick={() => {
                   close()
-                  actions.appearance()
+                  actions.settings()
                 }}
               >
-                <Palette size={14} /> 外观与主题
+                <Settings size={14} /> 设置
               </button>
               <div className="menu-sep" />
               <button
@@ -635,10 +635,10 @@ export function Sidebar({
         <button
           type="button"
           className="icon-btn"
-          onClick={actions.appearance}
-          title="外观与主题"
+          onClick={actions.settings}
+          title="设置"
         >
-          <Palette size={15} />
+          <Settings size={15} />
         </button>
         <button
           type="button"

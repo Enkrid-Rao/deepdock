@@ -5,7 +5,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { Connect } from './components/Connect'
 import { ConfirmDialog, MoveDialog, ProjectDialog, PromptDialog } from './components/Dialogs'
 import { SyncDialog } from './components/SyncDialog'
-import { AppearanceDialog } from './components/AppearanceDialog'
+import { SettingsPage } from './components/SettingsPage'
 import { ProjectMemoryDialog } from './components/ProjectMemoryDialog'
 import { Mark, Toaster, type ToastItem } from './components/ui'
 import { api, ApiError, streamChat } from './lib/api'
@@ -107,7 +107,7 @@ export default function App() {
   const [thinking, setThinking] = useState(() => readBool(THINKING_KEY))
   const [search, setSearch] = useState(() => readBool(SEARCH_KEY))
   const [appearance, setAppearance] = useState<Appearance>(loadAppearance)
-  const [appearanceOpen, setAppearanceOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [syncOpen, setSyncOpen] = useState(false)
   const [drawer, setDrawer] = useState(false)
   const [palette, setPalette] = useState(false)
@@ -301,6 +301,9 @@ export default function App() {
         resetDrafts()
         setActiveId(null)
         setActiveConv(null)
+      } else if (mod && e.key === ',') {
+        e.preventDefault()
+        setSettingsOpen(true)
       } else if (e.key === 'Escape') {
         setDrawer(false)
       }
@@ -839,7 +842,7 @@ export default function App() {
       account: (action: 'refresh' | 'reconnect' | 'disconnect' | 'dataFolder' | 'checkUpdates') =>
         void accountAction(action),
       sync: () => openSync(),
-      appearance: () => setAppearanceOpen(true),
+      settings: () => setSettingsOpen(true),
     }),
     [
       accountAction,
@@ -1017,11 +1020,13 @@ export default function App() {
 
       <SyncDialog open={syncOpen} onClose={() => setSyncOpen(false)} onImported={handleSynced} />
 
-      <AppearanceDialog
-        open={appearanceOpen}
+      <SettingsPage
+        open={settingsOpen}
         appearance={appearance}
         onChange={setAppearance}
-        onClose={() => setAppearanceOpen(false)}
+        onClose={() => setSettingsOpen(false)}
+        onCheckUpdates={() => void accountAction('checkUpdates')}
+        onOpenDataFolder={() => void accountAction('dataFolder')}
       />
 
       <Toaster toasts={toasts} />
