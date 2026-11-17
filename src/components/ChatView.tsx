@@ -5,6 +5,7 @@ import {
   FolderInput,
   Menu as MenuIcon,
   MoreHorizontal,
+  PanelLeft,
   Pencil,
   Pin,
   PinOff,
@@ -42,6 +43,8 @@ export function ChatView({
   onPin,
   onDelete,
   onOpenDrawer,
+  sidebarCollapsed = false,
+  onToggleSidebar,
   onSync,
   onSyncConversation,
   syncingConversation = false,
@@ -68,6 +71,8 @@ export function ChatView({
   onPin: () => void
   onDelete: () => void
   onOpenDrawer: () => void
+  sidebarCollapsed?: boolean
+  onToggleSidebar?: () => void
   onSync: () => void
   onSyncConversation?: () => void
   syncingConversation?: boolean
@@ -133,6 +138,15 @@ export function ChatView({
       <header className="topbar">
         <button type="button" className="icon-btn menu-toggle" onClick={onOpenDrawer} title="菜单">
           <MenuIcon size={17} />
+        </button>
+        <button
+          type="button"
+          className="icon-btn sidebar-toggle"
+          onClick={onToggleSidebar}
+          title={sidebarCollapsed ? '展开侧栏（Ctrl + B）' : '收起侧栏（Ctrl + B）'}
+          aria-label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+        >
+          <PanelLeft size={17} />
         </button>
 
         <div className="title-area">

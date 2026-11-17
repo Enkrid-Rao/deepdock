@@ -26,4 +26,12 @@ contextBridge.exposeInMainWorld('deepdockDesktop', {
     ipcRenderer.on('deepdock:update-state', listener)
     return () => ipcRenderer.removeListener('deepdock:update-state', listener)
   },
+  // Frameless window: buttons are drawn by the renderer.
+  windowControl: (action) => ipcRenderer.invoke('deepdock:window-control', action),
+  windowState: () => ipcRenderer.invoke('deepdock:window-state'),
+  onWindowState: (callback) => {
+    const listener = (_event, state) => callback(state)
+    ipcRenderer.on('deepdock:window-state', listener)
+    return () => ipcRenderer.removeListener('deepdock:window-state', listener)
+  },
 })

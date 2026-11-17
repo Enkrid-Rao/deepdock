@@ -440,6 +440,30 @@ kbd {
   height: 100dvh;
 }
 
+/* Sidebar collapse (desktop only; narrow windows use the drawer instead). */
+.topbar .sidebar-toggle {
+  display: none;
+}
+
+@media (min-width: 901px) {
+  .topbar .sidebar-toggle {
+    display: grid;
+  }
+
+  html[data-sidebar='collapsed'] .app {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+
+  html[data-sidebar='collapsed'] .sidebar {
+    display: none;
+  }
+
+  /* Without the sidebar the main column would auto-place into the 0px track. */
+  html[data-sidebar='collapsed'] .main {
+    grid-column: 2;
+  }
+}
+
 /* ---------------------------------------------------------------- sidebar */
 
 .sidebar {
@@ -2953,32 +2977,69 @@ kbd {
 
 /* ---------------------------------------------------------- window chrome */
 
-/* Windows builds hide the native title bar (titleBarOverlay), so the top bar
-   doubles as the drag region and leaves room for the OS caption buttons. */
+/* Windows builds are frameless, so the renderer draws the window buttons.
+   They are fixed above every screen and leave room in the top bar. */
 html[data-desktop] .topbar {
   -webkit-app-region: drag;
-  padding-right: 162px;
+  padding-right: 122px;
 }
 
 html[data-desktop] .topbar :is(button, a, input, textarea) {
   -webkit-app-region: no-drag;
 }
 
-html[data-desktop] .settings-head {
-  -webkit-app-region: drag;
-  padding-right: 162px;
-}
-
-html[data-desktop] .settings-head :is(button, a, input) {
-  -webkit-app-region: no-drag;
-}
-
+html[data-desktop] .settings-head,
 html[data-desktop] .connect {
   -webkit-app-region: drag;
 }
 
 html[data-desktop] .connect :is(.connect-card, button, a, input, textarea) {
   -webkit-app-region: no-drag;
+}
+
+.window-controls {
+  position: fixed;
+  top: 6px;
+  right: 8px;
+  z-index: 200;
+  display: flex;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.window-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: default;
+  transition:
+    background 120ms var(--ease),
+    color 120ms var(--ease);
+}
+
+.window-btn:hover {
+  background: color-mix(in oklab, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+
+.window-btn:active {
+  background: color-mix(in oklab, var(--ink) 13%, transparent);
+}
+
+.window-btn-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.window-btn-close:active {
+  background: #b02618;
+  color: #fff;
 }
 
 /* --------------------------------------------------------------- settings */
@@ -3014,13 +3075,33 @@ html[data-desktop] .connect :is(.connect-card, button, a, input, textarea) {
 
 .settings-rail-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   padding: 0 8px;
 }
 
+.settings-back {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.settings-back:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
 .settings-rail-title {
+  margin-right: auto;
   font-size: 15px;
   font-weight: 620;
   letter-spacing: -0.01em;
@@ -3093,20 +3174,11 @@ html[data-desktop] .connect :is(.connect-card, button, a, input, textarea) {
   margin-top: auto;
 }
 
-.settings-close {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: 9px;
-  color: var(--muted);
-  font-size: 12.5px;
-}
-
-.settings-close:hover {
-  background: var(--hover);
-  color: var(--ink);
+.settings-rail-hint {
+  padding: 0 8px;
+  color: var(--faint);
+  font-size: 10.6px;
+  line-height: 1.5;
 }
 
 .settings-main {

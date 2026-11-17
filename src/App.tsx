@@ -66,6 +66,7 @@ if (desktop) {
 
 const THINKING_KEY = 'deepdock:thinking'
 const SEARCH_KEY = 'deepdock:search'
+const SIDEBAR_KEY = 'deepdock:sidebar'
 
 function readBool(key: string, fallback = false): boolean {
   try {
@@ -106,6 +107,13 @@ export default function App() {
   const [search, setSearch] = useState(() => readBool(SEARCH_KEY))
   const [appearance, setAppearance] = useState<Appearance>(loadAppearance)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_KEY) === 'collapsed'
+    } catch {
+      return false
+    }
+  })
   const [updateState, setUpdateState] = useState<UpdateState | null>(null)
   const [syncOpen, setSyncOpen] = useState(false)
   const [drawer, setDrawer] = useState(false)
@@ -169,6 +177,15 @@ export default function App() {
     applyAppearance(appearance)
     saveAppearance(appearance)
   }, [appearance])
+
+  useEffect(() => {
+    document.documentElement.dataset.sidebar = sidebarCollapsed ? 'collapsed' : 'open'
+    try {
+      localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed ? 'collapsed' : 'open')
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarCollapsed])
 
   useEffect(() => {
     if (appearance.mode !== 'system') return undefined
@@ -312,6 +329,9 @@ export default function App() {
         resetDrafts()
         setActiveId(null)
         setActiveConv(null)
+      } else if (mod && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        setSidebarCollapsed((value) => !value)
       } else if (mod && e.key === ',') {
         e.preventDefault()
         setSettingsOpen(true)
@@ -963,6 +983,8 @@ export default function App() {
           onPin={() => activeConv && void pinConversation(activeConv)}
           onDelete={() => activeConv && deleteConversation(activeConv)}
           onOpenDrawer={() => setDrawer(true)}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
           onSync={openSync}
           onSyncConversation={() => void syncConversation()}
           syncingConversation={convSyncing}

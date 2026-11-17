@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  ArrowLeft,
   Check,
   Download,
   FolderInput,
@@ -11,7 +12,6 @@ import {
   RotateCcw,
   Sun,
   Type,
-  X,
 } from 'lucide-react'
 import type { UpdateState } from '../lib/types'
 import {
@@ -311,6 +311,9 @@ export function SettingsPage({
       <div className="settings-shell">
         <aside className="settings-rail">
           <div className="settings-rail-head">
+            <button type="button" className="settings-back" title="返回对话（Esc）" onClick={onClose}>
+              <ArrowLeft size={15} />
+            </button>
             <span className="settings-rail-title">设置</span>
             <span className="settings-rail-version">{info?.version ? `v${info.version}` : 'DeepDock'}</span>
           </div>
@@ -331,9 +334,7 @@ export function SettingsPage({
             ))}
           </nav>
           <div className="settings-rail-foot">
-            <button type="button" className="settings-close" onClick={onClose}>
-              <X size={14} /> 关闭设置
-            </button>
+            <span className="settings-rail-hint">Ctrl + , 打开设置 · Esc 返回</span>
           </div>
         </aside>
 
@@ -343,9 +344,6 @@ export function SettingsPage({
               <h1>{activeSection.label}</h1>
               <p>{activeSection.hint}。所有改动立刻生效，并保存在这台电脑上。</p>
             </div>
-            <button type="button" className="icon-btn" title="关闭设置" onClick={onClose}>
-              <X size={16} />
-            </button>
           </header>
 
           <div className="settings-body">

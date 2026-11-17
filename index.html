@@ -23,6 +23,8 @@
           root.dataset.serif = saved && saved.serif === false ? 'off' : 'on'
           root.dataset.grain = saved && saved.grain === false ? 'off' : 'on'
           root.dataset.motion = saved && saved.motion === 'reduced' ? 'reduced' : 'full'
+          root.dataset.sidebar =
+            localStorage.getItem('deepdock:sidebar') === 'collapsed' ? 'collapsed' : 'open'
           root.style.colorScheme = dark ? 'dark' : 'light'
 
           // Custom fonts are applied before the first paint (React repeats this).

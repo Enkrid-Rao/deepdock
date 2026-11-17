@@ -71,24 +71,9 @@ function readAppearance() {
   return { background: null, ink: null, dark: false }
 }
 
-const TITLEBAR_HEIGHT = 46
-
-/** Windows: frameless content with native-ish caption buttons drawn by the OS. */
-function titleBarOptions(background, symbolColor) {
-  if (process.platform !== 'win32') return {}
-  return {
-    titleBarStyle: 'hidden',
-    titleBarOverlay: { color: background, symbolColor, height: TITLEBAR_HEIGHT },
-  }
-}
-
-function applyTitleBar(win, background, symbolColor) {
-  if (process.platform !== 'win32' || typeof win?.setTitleBarOverlay !== 'function') return
-  try {
-    win.setTitleBarOverlay({ color: background, symbolColor, height: TITLEBAR_HEIGHT })
-  } catch {
-    /* ignore */
-  }
+/** Windows builds are frameless; the renderer draws its own window buttons. */
+function windowChromeOptions() {
+  return process.platform === 'win32' ? { frame: false, thickFrame: true } : {}
 }
 
 /* ----------------------------------------------------------------- server */
@@ -131,7 +116,6 @@ function createWindow(port) {
   const appearance = readAppearance()
   const background =
     appearance.background || (nativeTheme.shouldUseDarkColors ? '#0b0c0e' : '#f5f2ea')
-  const symbolColor = appearance.ink || (appearance.dark ? '#f0f2f6' : '#14130e')
   const win = new BrowserWindow({
     width: Math.max(state.width || 1240, 900),
     height: Math.max(state.height || 860, 620),
@@ -144,7 +128,7 @@ function createWindow(port) {
     backgroundColor: background,
     ...(fs.existsSync(iconPath) ? { icon: iconPath } : {}),
     autoHideMenuBar: true,
-    ...titleBarOptions(background, symbolColor),
+    ...windowChromeOptions(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -157,6 +141,14 @@ function createWindow(port) {
 
   win.setMenuBarVisibility(false)
   if (state.maximized) win.maximize()
+
+  const sendWindowState = () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('deepdock:window-state', { maximized: win.isMaximized() })
+    }
+  }
+  win.on('maximize', sendWindowState)
+  win.on('unmaximize', sendWindowState)
 
   const origin = `http://127.0.0.1:${port}`
   win.loadURL(`${origin}/`)
@@ -328,8 +320,23 @@ ipcMain.on('deepdock:appearance', (event, payload) => {
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue
     win.setBackgroundColor(background)
-    applyTitleBar(win, background, symbolColor)
   }
+})
+
+ipcMain.handle('deepdock:window-state', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow
+  return { maximized: Boolean(win && !win.isDestroyed() && win.isMaximized()) }
+})
+
+ipcMain.handle('deepdock:window-control', (event, action) => {
+  const win = BrowserWindow.fromWebContents(event.sender) || mainWindow
+  if (!win || win.isDestroyed()) return { maximized: false }
+  if (action === 'minimize') win.minimize()
+  else if (action === 'maximize') {
+    if (win.isMaximized()) win.unmaximize()
+    else win.maximize()
+  } else if (action === 'close') win.close()
+  return { maximized: win.isMaximized() }
 })
 
 ipcMain.handle('deepdock:open-data', async () => {
