@@ -365,73 +365,171 @@ ipcMain.handle('deepdock:confirm', async (event, options) => {
 
 /* ------------------------------------------------------------ auto update */
 
-// electron-builder embeds an `app-update.yml` pointing at GitHub Releases, so
-// electron-updater only needs a nudge: check after launch, download quietly,
-// then ask before restarting. Disabled in dev builds (no app-update.yml).
+// electron-builder embeds an `app-update.yml` pointing at GitHub Releases.
+// The renderer can ask for a check (and choose whether to download); the
+// background timer only checks, never downloads, so nothing happens without
+// the user's consent. State is mirrored to the renderer for the settings page.
+
+const updateState = {
+  status: 'idle', // idle | checking | available | downloading | downloaded | current | error | dev
+  version: '',
+  current: '',
+  percent: 0,
+  message: '',
+}
+
 let updatePromptOpen = false
-let updateAvailable = false
-let updateVersion = ''
+
+function updateSnapshot() {
+  return { ...updateState, current: app.getVersion() }
+}
+
+function pushUpdateState(patch) {
+  Object.assign(updateState, patch)
+  const snapshot = updateSnapshot()
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('deepdock:update-state', snapshot)
+  }
+  return snapshot
+}
+
+function friendlyUpdateError(err) {
+  const message = String(err?.message || err || '')
+  if (/net::|network|timed?\s?out|ECONN|ENOTFOUND|ERR_/i.test(message)) {
+    return '连不上 GitHub，检查更新需要能访问 GitHub（可开启系统代理）'
+  }
+  return message || '检查更新失败'
+}
+
+async function downloadUpdate() {
+  if (IS_DEV) return updateSnapshot()
+  if (updateState.status === 'downloading') return updateSnapshot()
+  try {
+    pushUpdateState({ status: 'downloading', percent: 0, message: '' })
+    await autoUpdater.downloadUpdate()
+  } catch (err) {
+    pushUpdateState({ status: 'error', message: friendlyUpdateError(err) })
+  }
+  return updateSnapshot()
+}
+
+async function promptDownload(version) {
+  if (updatePromptOpen) return
+  updatePromptOpen = true
+  try {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      buttons: ['下载并安装', '稍后'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      title: 'DeepDock 有新版本',
+      message: `发现新版本 ${version}`,
+      detail: `当前版本 v${app.getVersion()}。现在下载，下载完成后会再问你是否重启安装；选择「稍后」可以之后在「设置 → 应用 → 更新」里操作。`,
+    })
+    if (response === 0) await downloadUpdate()
+  } finally {
+    updatePromptOpen = false
+  }
+}
+
+async function promptInstall(version) {
+  if (updatePromptOpen) return
+  updatePromptOpen = true
+  try {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      buttons: ['立即重启安装', '退出时安装'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      title: 'DeepDock 更新已下载',
+      message: `新版本 ${version || updateState.version} 已经下载好`,
+      detail: '现在重启会立即安装；选择「退出时安装」则在下次退出 DeepDock 时自动安装。',
+    })
+    if (response === 0) setImmediate(() => autoUpdater.quitAndInstall(true, true))
+  } finally {
+    updatePromptOpen = false
+  }
+}
 
 function setupAutoUpdater() {
-  if (IS_DEV) return
+  if (IS_DEV) {
+    updateState.status = 'dev'
+    return
+  }
 
-  autoUpdater.autoDownload = true
+  autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.on('error', (err) => {
     console.warn('[deepdock] updater:', err?.message || err)
+    pushUpdateState({ status: 'error', message: friendlyUpdateError(err) })
+  })
+  autoUpdater.on('checking-for-update', () => {
+    pushUpdateState({ status: 'checking', message: '' })
   })
   autoUpdater.on('update-available', (info) => {
-    updateAvailable = true
-    updateVersion = info?.version || ''
-    console.log('[deepdock] update available:', updateVersion)
+    pushUpdateState({ status: 'available', version: info?.version || '', percent: 0, message: '' })
   })
   autoUpdater.on('update-not-available', () => {
-    updateAvailable = false
-    updateVersion = ''
+    pushUpdateState({ status: 'current', version: app.getVersion(), percent: 0, message: '' })
   })
-  autoUpdater.on('update-downloaded', async (info) => {
-    if (updatePromptOpen) return
-    updatePromptOpen = true
-    try {
-      const { response } = await dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        buttons: ['立即重启安装', '稍后'],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true,
-        title: 'DeepDock 有新版本',
-        message: `新版本 ${info?.version || ''} 已经下载好`,
-        detail: '现在重启会立即安装；选择「稍后」则在下次退出 DeepDock 时自动安装。',
-      })
-      if (response === 0) {
-        setImmediate(() => autoUpdater.quitAndInstall(true, true))
-      }
-    } finally {
-      updatePromptOpen = false
-    }
+  autoUpdater.on('download-progress', (progress) => {
+    pushUpdateState({ status: 'downloading', percent: Math.round(progress?.percent || 0) })
+  })
+  autoUpdater.on('update-downloaded', (info) => {
+    pushUpdateState({
+      status: 'downloaded',
+      version: info?.version || updateState.version,
+      percent: 100,
+      message: '',
+    })
+    void promptInstall(info?.version)
   })
 
-  // Give the window time to paint before touching the network.
-  setTimeout(() => {
+  // Background checks only look for updates; installing always needs a click.
+  const backgroundCheck = () => {
     autoUpdater.checkForUpdates().catch(() => {})
-  }, 15000)
-  const timer = setInterval(() => {
-    autoUpdater.checkForUpdates().catch(() => {})
-  }, 6 * 60 * 60 * 1000)
+  }
+  setTimeout(backgroundCheck, 15000)
+  const timer = setInterval(backgroundCheck, 6 * 60 * 60 * 1000)
   if (timer.unref) timer.unref()
 }
 
 ipcMain.handle('deepdock:check-updates', async () => {
-  if (IS_DEV) return { status: 'dev', version: app.getVersion() }
+  if (IS_DEV) return { ...updateSnapshot(), status: 'dev' }
   try {
-    await autoUpdater.checkForUpdates()
-    if (updateAvailable) {
-      return { status: 'downloading', version: updateVersion || app.getVersion(), current: app.getVersion() }
+    pushUpdateState({ status: 'checking', message: '' })
+    const result = await autoUpdater.checkForUpdates()
+    const latest = result?.updateInfo?.version || ''
+    const newer = Boolean(latest) && latest !== app.getVersion()
+    if (newer) {
+      const alreadyDownloaded = updateState.status === 'downloaded'
+      pushUpdateState({
+        status: alreadyDownloaded ? 'downloaded' : 'available',
+        version: latest,
+        percent: alreadyDownloaded ? 100 : 0,
+        message: '',
+      })
+      if (!alreadyDownloaded) await promptDownload(latest)
+    } else {
+      pushUpdateState({ status: 'current', version: app.getVersion(), percent: 0, message: '' })
     }
-    return { status: 'current', version: app.getVersion() }
+    return updateSnapshot()
   } catch (err) {
-    return { status: 'error', message: err?.message || '检查更新失败' }
+    pushUpdateState({ status: 'error', message: friendlyUpdateError(err) })
+    return updateSnapshot()
   }
+})
+
+ipcMain.handle('deepdock:download-update', () => downloadUpdate())
+ipcMain.handle('deepdock:update-state', () => updateSnapshot())
+ipcMain.handle('deepdock:install-update', () => {
+  if (!IS_DEV && updateState.status === 'downloaded') {
+    setImmediate(() => autoUpdater.quitAndInstall(true, true))
+    return { ok: true }
+  }
+  return { ok: false }
 })
 
 /* -------------------------------------------------------------- lifecycle */

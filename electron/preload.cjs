@@ -18,4 +18,12 @@ contextBridge.exposeInMainWorld('deepdockDesktop', {
   scanInfo: () => ipcRenderer.invoke('deepdock:scan-info'),
   // Packaged builds check GitHub Releases for a newer version.
   checkUpdates: () => ipcRenderer.invoke('deepdock:check-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('deepdock:download-update'),
+  installUpdate: () => ipcRenderer.invoke('deepdock:install-update'),
+  updateState: () => ipcRenderer.invoke('deepdock:update-state'),
+  onUpdateState: (callback) => {
+    const listener = (_event, state) => callback(state)
+    ipcRenderer.on('deepdock:update-state', listener)
+    return () => ipcRenderer.removeListener('deepdock:update-state', listener)
+  },
 })

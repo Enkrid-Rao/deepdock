@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Check,
+  Download,
   FolderInput,
   Info,
   Monitor,
@@ -12,6 +13,7 @@ import {
   Type,
   X,
 } from 'lucide-react'
+import type { UpdateState } from '../lib/types'
 import {
   ACCENTS,
   CODE_FONT_DEFAULT,
@@ -52,6 +54,28 @@ const SECTIONS: { key: Section; label: string; hint: string; icon: typeof Palett
   { key: 'fonts', label: '字体', hint: '界面与代码字体', icon: Type },
   { key: 'app', label: '应用', hint: '版本、更新与数据', icon: Info },
 ]
+
+function updateText(update: UpdateState | null): string {
+  if (!update || update.status === 'idle') return '启动时会自动检查更新'
+  switch (update.status) {
+    case 'checking':
+      return '正在检查更新…'
+    case 'current':
+      return `已经是最新版本（v${update.current || update.version}）`
+    case 'available':
+      return `发现新版本 v${update.version}（当前 v${update.current}）`
+    case 'downloading':
+      return `正在下载 v${update.version}… ${update.percent}%`
+    case 'downloaded':
+      return `新版本 v${update.version} 已下载，重启即可安装`
+    case 'error':
+      return `检查更新失败：${update.message}`
+    case 'dev':
+      return '开发模式下不检查更新'
+    default:
+      return '启动时会自动检查更新'
+  }
+}
 
 function PaletteCard({
   palette,
@@ -231,14 +255,20 @@ export function SettingsPage({
   onChange,
   onClose,
   onCheckUpdates,
+  onDownloadUpdate,
+  onInstallUpdate,
   onOpenDataFolder,
+  updateState = null,
 }: {
   open: boolean
   appearance: Appearance
   onChange: (next: Appearance) => void
   onClose: () => void
   onCheckUpdates: () => void
+  onDownloadUpdate: () => void
+  onInstallUpdate: () => void
   onOpenDataFolder: () => void
+  updateState?: UpdateState | null
 }) {
   const [section, setSection] = useState<Section>('appearance')
   const [info, setInfo] = useState<DesktopInfo | null>(null)
@@ -508,10 +538,33 @@ export function SettingsPage({
 
                   <Card
                     title="更新"
-                    hint="启动后会自动检查 GitHub Releases；有新版本会在后台下载。"
+                    hint="启动后自动检查 GitHub Releases；是否下载、是否安装都由你决定。"
                   >
+                    <div className="settings-update" data-status={updateState?.status || 'idle'}>
+                      <span className="settings-update-text">{updateText(updateState)}</span>
+                      {updateState?.status === 'downloading' ? (
+                        <div className="settings-progress">
+                          <i style={{ width: `${Math.max(0, Math.min(100, updateState.percent))}%` }} />
+                        </div>
+                      ) : null}
+                    </div>
                     <div className="settings-actions">
-                      <button type="button" className="btn btn-ghost" onClick={onCheckUpdates}>
+                      {updateState?.status === 'available' ? (
+                        <button type="button" className="btn btn-primary" onClick={onDownloadUpdate}>
+                          <Download size={14} /> 下载并安装 v{updateState.version}
+                        </button>
+                      ) : null}
+                      {updateState?.status === 'downloaded' ? (
+                        <button type="button" className="btn btn-primary" onClick={onInstallUpdate}>
+                          <RefreshCw size={14} /> 重启并安装
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={onCheckUpdates}
+                        disabled={updateState?.status === 'checking' || updateState?.status === 'downloading'}
+                      >
                         <RefreshCw size={14} /> 检查更新
                       </button>
                       <button type="button" className="btn btn-ghost" onClick={onOpenDataFolder}>

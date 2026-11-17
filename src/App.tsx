@@ -26,6 +26,7 @@ import type {
   Message,
   Project,
   SyncImportResult,
+  UpdateState,
   User,
 } from './lib/types'
 
@@ -42,13 +43,6 @@ type AutoConnectResult = {
   user?: User | null
 }
 
-type UpdateCheckResult = {
-  status: 'current' | 'downloading' | 'dev' | 'error'
-  version?: string
-  current?: string
-  message?: string
-}
-
 type DesktopBridge = {
   isDesktop: boolean
   platform: string
@@ -57,7 +51,11 @@ type DesktopBridge = {
   openExternal: (url: string) => Promise<void>
   info: () => Promise<{ version: string; dataDir: string; electron: string }>
   autoConnect?: () => Promise<AutoConnectResult>
-  checkUpdates?: () => Promise<UpdateCheckResult>
+  checkUpdates?: () => Promise<UpdateState>
+  downloadUpdate?: () => Promise<UpdateState>
+  installUpdate?: () => Promise<{ ok: boolean }>
+  updateState?: () => Promise<UpdateState>
+  onUpdateState?: (callback: (state: UpdateState) => void) => () => void
 }
 
 const desktop = (window as unknown as { deepdockDesktop?: DesktopBridge }).deepdockDesktop
@@ -108,6 +106,7 @@ export default function App() {
   const [search, setSearch] = useState(() => readBool(SEARCH_KEY))
   const [appearance, setAppearance] = useState<Appearance>(loadAppearance)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null)
   const [syncOpen, setSyncOpen] = useState(false)
   const [drawer, setDrawer] = useState(false)
   const [palette, setPalette] = useState(false)
@@ -182,6 +181,18 @@ export default function App() {
     query.addEventListener('change', onChange)
     return () => query.removeEventListener('change', onChange)
   }, [appearance])
+
+  // Desktop updater: the main process owns the state machine and pushes every
+  // change (checking / available / downloading / downloaded) here.
+  useEffect(() => {
+    if (!desktop?.onUpdateState) return undefined
+    const unsubscribe = desktop.onUpdateState((state) => setUpdateState(state))
+    desktop
+      .updateState?.()
+      .then((state) => setUpdateState(state))
+      .catch(() => {})
+    return unsubscribe
+  }, [])
 
   useEffect(() => {
     try {
@@ -683,15 +694,16 @@ export default function App() {
         toast('正在检查更新…')
         try {
           const result = await desktop.checkUpdates()
+          setUpdateState(result)
           if (result.status === 'current') {
-            toast(`已经是最新版本（v${result.version || ''}）`)
-          } else if (result.status === 'downloading') {
-            toast(`发现新版本 v${result.version || ''}，正在后台下载…`)
+            toast(`已经是最新版本（v${result.current || result.version || ''}）`)
+          } else if (result.status === 'available') {
+            toast(`发现新版本 v${result.version}，可在「设置 → 应用 → 更新」里安装`)
+          } else if (result.status === 'downloaded') {
+            toast(`新版本 v${result.version} 已下载，重启即可安装`)
           } else if (result.status === 'dev') {
             toast('开发模式下不检查更新')
-          } else if (/net::|network|timed?\s?out|ECONN|ENOTFOUND/i.test(result.message || '')) {
-            toast('连不上 GitHub，检查更新需要能访问 GitHub（可开启系统代理）')
-          } else {
+          } else if (result.status === 'error') {
             toast(result.message || '检查更新失败，请稍后再试')
           }
         } catch {
@@ -1026,7 +1038,12 @@ export default function App() {
         onChange={setAppearance}
         onClose={() => setSettingsOpen(false)}
         onCheckUpdates={() => void accountAction('checkUpdates')}
+        onDownloadUpdate={() => {
+          void desktop?.downloadUpdate?.().then((state) => state && setUpdateState(state))
+        }}
+        onInstallUpdate={() => void desktop?.installUpdate?.()}
         onOpenDataFolder={() => void accountAction('dataFolder')}
+        updateState={updateState}
       />
 
       <Toaster toasts={toasts} />

@@ -3215,6 +3215,43 @@ html[data-desktop] .connect :is(.connect-card, button, a, input, textarea) {
   line-height: 1.55;
 }
 
+.settings-update {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-update-text {
+  color: var(--ink-2);
+  font-size: 12.6px;
+  line-height: 1.5;
+}
+
+.settings-update[data-status='available'] .settings-update-text,
+.settings-update[data-status='downloaded'] .settings-update-text {
+  color: color-mix(in oklab, var(--accent) 82%, var(--ink));
+  font-weight: 500;
+}
+
+.settings-update[data-status='error'] .settings-update-text {
+  color: var(--danger);
+}
+
+.settings-progress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+}
+
+.settings-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 200ms var(--ease);
+}
+
 .settings-actions {
   display: flex;
   flex-wrap: wrap;

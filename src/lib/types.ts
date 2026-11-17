@@ -83,6 +83,24 @@ export type User = {
   name: string | null
 }
 
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'current'
+  | 'error'
+  | 'dev'
+
+export type UpdateState = {
+  status: UpdateStatus
+  version: string
+  current: string
+  percent: number
+  message: string
+}
+
 export type Bootstrap = {
   connected: boolean
   user: User | null
