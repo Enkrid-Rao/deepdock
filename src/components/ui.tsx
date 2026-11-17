@@ -9,30 +9,17 @@ import {
 } from 'react'
 import { Check, Copy } from 'lucide-react'
 
-export function Mark({ size = 18 }: { size?: number }) {
+/** Product icon inside the rounded brand tile (same art as the app icon). */
+export function Logo({ size = 28 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M2.6 8.4c2.1 0 2.1-2.3 4.3-2.3s2.1 2.3 4.3 2.3 2.1-2.3 4.3-2.3 2.1 2.3 4.3 2.3"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-      <path
-        d="M2.6 13.4c2.1 0 2.1-2.3 4.3-2.3s2.1 2.3 4.3 2.3 2.1-2.3 4.3-2.3 2.1 2.3 4.3 2.3"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        opacity="0.72"
-      />
-      <path
-        d="M2.6 18.4c2.1 0 2.1-2.3 4.3-2.3s2.1 2.3 4.3 2.3 2.1-2.3 4.3-2.3 2.1 2.3 4.3 2.3"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        opacity="0.42"
-      />
-    </svg>
+    <img
+      className="brand-logo"
+      src="/logo.png"
+      width={size}
+      height={size}
+      alt=""
+      draggable={false}
+    />
   )
 }
 

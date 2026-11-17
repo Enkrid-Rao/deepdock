@@ -6,6 +6,7 @@ import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
 import { CopyButton } from './ui'
 import { normalizeMathDelimiters } from '../lib/math'
+import { rehypeCitations } from '../lib/citations'
 
 function nodeText(node: ReactNode): string {
   if (node == null || typeof node === 'boolean') return ''
@@ -64,6 +65,7 @@ export const Markdown = memo(function Markdown({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[
+          rehypeCitations,
           [rehypeHighlight, { detect: false, ignoreMissing: true }],
           [rehypeKatex, { throwOnError: false, strict: false }],
         ]}

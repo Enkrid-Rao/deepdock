@@ -1142,6 +1142,8 @@ function mockContent(prompt) {
 \\int_0^1 x^2 \\, dx = \\frac{1}{3}
 \\]
 
+联网搜索的引用会显示成小角标[reference:1][reference:2]，写成代码时保持原样：\`[reference:3]\`
+
 \`\`\`ts
 // 一个很小的例子
 export function dock(name: string) {

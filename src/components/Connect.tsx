@@ -11,7 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { api, ApiError } from '../lib/api'
-import { Mark, copyText } from './ui'
+import { Logo, copyText } from './ui'
 import type { User } from '../lib/types'
 
 const SNIPPET = "localStorage.getItem('userToken')"
@@ -157,7 +157,7 @@ export function Connect({
       <div className="connect-card">
         <div className="connect-brand">
           <div className="brand-mark">
-            <Mark size={17} />
+            <Logo size={28} />
           </div>
           <div className="brand-text">
             <span className="brand-name">deepdock</span>

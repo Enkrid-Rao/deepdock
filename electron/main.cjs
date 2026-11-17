@@ -55,16 +55,40 @@ function appearanceFile() {
   return path.join(app.getPath('userData'), 'appearance.json')
 }
 
-function readAppearanceBackground() {
+function readAppearance() {
   try {
     const value = JSON.parse(fs.readFileSync(appearanceFile(), 'utf8'))
-    if (typeof value?.background === 'string' && /^#[0-9a-f]{6}$/i.test(value.background)) {
-      return value.background
+    const color = (input) =>
+      typeof input === 'string' && /^#[0-9a-f]{6}$/i.test(input) ? input : null
+    return {
+      background: color(value?.background),
+      ink: color(value?.ink),
+      dark: Boolean(value?.dark),
     }
   } catch {
     /* ignore */
   }
-  return null
+  return { background: null, ink: null, dark: false }
+}
+
+const TITLEBAR_HEIGHT = 46
+
+/** Windows: frameless content with native-ish caption buttons drawn by the OS. */
+function titleBarOptions(background, symbolColor) {
+  if (process.platform !== 'win32') return {}
+  return {
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: background, symbolColor, height: TITLEBAR_HEIGHT },
+  }
+}
+
+function applyTitleBar(win, background, symbolColor) {
+  if (process.platform !== 'win32' || typeof win?.setTitleBarOverlay !== 'function') return
+  try {
+    win.setTitleBarOverlay({ color: background, symbolColor, height: TITLEBAR_HEIGHT })
+  } catch {
+    /* ignore */
+  }
 }
 
 /* ----------------------------------------------------------------- server */
@@ -104,6 +128,10 @@ async function startServer() {
 function createWindow(port) {
   const state = readWindowState() || {}
   const iconPath = path.join(ROOT, 'build', 'icon.ico')
+  const appearance = readAppearance()
+  const background =
+    appearance.background || (nativeTheme.shouldUseDarkColors ? '#0b0c0e' : '#f5f2ea')
+  const symbolColor = appearance.ink || (appearance.dark ? '#f0f2f6' : '#14130e')
   const win = new BrowserWindow({
     width: Math.max(state.width || 1240, 900),
     height: Math.max(state.height || 860, 620),
@@ -113,10 +141,10 @@ function createWindow(port) {
     minHeight: 620,
     show: false,
     title: 'DeepDock',
-    backgroundColor:
-      readAppearanceBackground() || (nativeTheme.shouldUseDarkColors ? '#0b0c0e' : '#f5f2ea'),
+    backgroundColor: background,
     ...(fs.existsSync(iconPath) ? { icon: iconPath } : {}),
     autoHideMenuBar: true,
+    ...titleBarOptions(background, symbolColor),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -282,17 +310,25 @@ ipcMain.on('deepdock:appearance', (event, payload) => {
       : nativeTheme.shouldUseDarkColors
         ? '#0b0c0e'
         : '#f5f2ea'
+  const symbolColor =
+    typeof payload?.ink === 'string' && /^#[0-9a-f]{6}$/i.test(payload.ink)
+      ? payload.ink
+      : payload?.dark
+        ? '#f0f2f6'
+        : '#14130e'
   try {
     fs.mkdirSync(path.dirname(appearanceFile()), { recursive: true })
     fs.writeFileSync(
       appearanceFile(),
-      JSON.stringify({ background, dark: Boolean(payload?.dark) }, null, 2),
+      JSON.stringify({ background, dark: Boolean(payload?.dark), ink: symbolColor }, null, 2),
     )
   } catch {
     /* ignore */
   }
   for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.setBackgroundColor(background)
+    if (win.isDestroyed()) continue
+    win.setBackgroundColor(background)
+    applyTitleBar(win, background, symbolColor)
   }
 })
 

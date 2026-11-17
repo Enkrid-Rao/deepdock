@@ -226,6 +226,14 @@ export function paletteBackground(appearance: Appearance, dark = resolveTheme(ap
   return LIGHT_PALETTES.find((palette) => palette.key === appearance.lightPalette)?.bg || '#f5f2ea'
 }
 
+/** Foreground colour for the OS-drawn window buttons (Windows title bar overlay). */
+export function paletteInk(appearance: Appearance, dark = resolveTheme(appearance) === 'dark'): string {
+  if (dark) {
+    return DARK_PALETTES.find((palette) => palette.key === appearance.darkPalette)?.ink || '#f9fafb'
+  }
+  return LIGHT_PALETTES.find((palette) => palette.key === appearance.lightPalette)?.ink || '#14130e'
+}
+
 export function normalizeAppearance(input: unknown): Appearance {
   const value = (input && typeof input === 'object' ? input : {}) as Partial<Appearance>
   const mode: AppearanceMode =
@@ -281,13 +289,14 @@ export function saveAppearance(appearance: Appearance): void {
 }
 
 type DesktopThemeBridge = {
-  setAppearance?: (payload: { dark: boolean; background: string }) => void
+  setAppearance?: (payload: { dark: boolean; background: string; ink?: string }) => void
 }
 
 /** Write the current appearance to the document (and the Electron window). */
 export function applyAppearance(appearance: Appearance): { dark: boolean; background: string } {
   const dark = resolveTheme(appearance) === 'dark'
   const background = paletteBackground(appearance, dark)
+  const ink = paletteInk(appearance, dark)
   const root = document.documentElement
   root.dataset.theme = dark ? 'dark' : 'light'
   root.dataset.lightPalette = appearance.lightPalette
@@ -307,7 +316,7 @@ export function applyAppearance(appearance: Appearance): { dark: boolean; backgr
 
   const bridge = (window as unknown as { deepdockDesktop?: DesktopThemeBridge }).deepdockDesktop
   try {
-    bridge?.setAppearance?.({ dark, background })
+    bridge?.setAppearance?.({ dark, background, ink })
   } catch {
     /* ignore */
   }

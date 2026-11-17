@@ -7,7 +7,7 @@ import { ConfirmDialog, MoveDialog, ProjectDialog, PromptDialog } from './compon
 import { SyncDialog } from './components/SyncDialog'
 import { SettingsPage } from './components/SettingsPage'
 import { ProjectMemoryDialog } from './components/ProjectMemoryDialog'
-import { Mark, Toaster, type ToastItem } from './components/ui'
+import { Logo, Toaster, type ToastItem } from './components/ui'
 import { api, ApiError, streamChat } from './lib/api'
 import {
   applyAppearance,
@@ -862,7 +862,7 @@ export default function App() {
       <div className="connect">
         <div className="connect-card" style={{ textAlign: 'center' }}>
           <div className="brand-mark" style={{ margin: '0 auto 14px' }}>
-            <Mark size={17} />
+            <Logo size={28} />
           </div>
           <h1 style={{ fontSize: 24 }}>{fatal}</h1>
           <p className="lede">在项目目录里运行 <code>npm start</code> 后刷新页面即可。</p>
@@ -876,7 +876,7 @@ export default function App() {
       <div className="connect">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--muted)' }}>
           <span className="brand-mark">
-            <Mark size={17} />
+            <Logo size={28} />
           </span>
           <span style={{ fontFamily: 'var(--font-serif)', fontSize: 20, color: 'var(--ink)' }}>deepdock</span>
         </div>

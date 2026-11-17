@@ -500,6 +500,10 @@ export function SettingsPage({
                         <dd title={info?.dataDir}>{info?.dataDir || '—'}</dd>
                       </div>
                     </dl>
+                    <p className="settings-note">
+                      卸载：Windows 设置 → 应用 → 已安装的应用 → DeepDock，或开始菜单里的「卸载 DeepDock」。
+                      卸载时会询问是否一并删除本机数据，默认保留。
+                    </p>
                   </Card>
 
                   <Card

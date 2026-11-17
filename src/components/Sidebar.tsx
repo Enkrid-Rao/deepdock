@@ -22,7 +22,7 @@ import {
   PlugZap,
 } from 'lucide-react'
 import { Menu } from './ui'
-import { Mark } from './ui'
+import { Logo } from './ui'
 import { displayName, initials } from '../lib/format'
 import { projectColor, type ConversationMeta, type Project, type User } from '../lib/types'
 
@@ -459,7 +459,7 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="brand">
         <div className="brand-mark">
-          <Mark size={17} />
+          <Logo size={28} />
         </div>
         <div className="brand-text">
           <span className="brand-name">deepdock</span>
