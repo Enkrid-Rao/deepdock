@@ -2091,6 +2091,24 @@ kbd {
   cursor: default;
 }
 
+.md-cite a {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.md-cite[data-linked='true']:hover {
+  border-color: color-mix(in oklab, var(--accent) 42%, var(--line));
+  background: color-mix(in oklab, var(--accent) 13%, var(--bg-sunken));
+  color: var(--ink);
+}
+
+.md-cite a:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
 /* ------------------------------------------------------------------ menus */
 
 .popover {

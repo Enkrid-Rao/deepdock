@@ -24,6 +24,7 @@ import type {
   Conversation,
   ConversationMeta,
   Message,
+  MessageReference,
   Project,
   SyncImportResult,
   UpdateState,
@@ -186,6 +187,41 @@ export default function App() {
       /* ignore */
     }
   }, [sidebarCollapsed])
+
+  // Citation links added in a later version: fetch them once for old messages
+  // that only contain [reference:N] text, then keep them in the local store.
+  const citationBackfill = useRef(new Set<string>())
+  useEffect(() => {
+    const conv = activeConv
+    if (!conv || citationBackfill.current.has(conv.id)) return undefined
+    const pending = conv.messages.filter(
+      (message) =>
+        message.role === 'assistant' &&
+        /\[reference:\d+\]/.test(message.content) &&
+        (!message.references || !message.references.length),
+    )
+    if (!pending.length) return undefined
+    citationBackfill.current.add(conv.id)
+    let alive = true
+    api
+      .citations(conv.id)
+      .then(({ references }) => {
+        if (!alive || !references || !Object.keys(references).length) return
+        setActiveConv((previous) => {
+          if (!previous || previous.id !== conv.id) return previous
+          return {
+            ...previous,
+            messages: previous.messages.map((message) =>
+              references[message.id] ? { ...message, references: references[message.id] } : message,
+            ),
+          }
+        })
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [activeConv?.id])
 
   useEffect(() => {
     if (appearance.mode !== 'system') return undefined
@@ -435,7 +471,12 @@ export default function App() {
       const controller = new AbortController()
       abortRef.current = controller
 
-      const settle = (patch: { error?: string | null; content?: string; reasoning?: string }) => {
+      const settle = (patch: {
+        error?: string | null
+        content?: string
+        reasoning?: string
+        references?: MessageReference[]
+      }) => {
         const s = streamRef.current
         if (s?.raf) cancelAnimationFrame(s.raf)
         const content = patch.content ?? s?.content ?? ''
@@ -480,8 +521,24 @@ export default function App() {
           },
           onDelta: (delta) => pushDelta('content', delta),
           onReasoning: (delta) => pushDelta('reasoning', delta),
+          onReferences: (references) => {
+            setActiveConv((previous) => {
+              if (!previous || previous.id !== convId) return previous
+              return {
+                ...previous,
+                messages: previous.messages.map((message) =>
+                  message.id === asstMsg.id ? { ...message, references } : message,
+                ),
+              }
+            })
+          },
           onDone: (data) => {
-            settle({ error: null, content: data.content, reasoning: data.reasoning })
+            settle({
+              error: null,
+              content: data.content,
+              reasoning: data.reasoning,
+              references: data.references,
+            })
             if (data.conversation) {
               setConversations((prev) =>
                 sortConversations(

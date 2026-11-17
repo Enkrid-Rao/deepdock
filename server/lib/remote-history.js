@@ -6,6 +6,8 @@
 // DeepDock only models user/assistant text plus an optional reasoning block, so
 // everything else is folded down or skipped.
 
+import { collectReferences } from './references.js'
+
 const ATTACHMENT_PLACEHOLDER = '（附件消息，DeepDock 暂不支持显示附件）'
 
 function fragmentText(fragments, types) {
@@ -79,10 +81,12 @@ export function convertRemoteHistory(history, session = {}) {
     const content = fragmentText(fragments, ['RESPONSE']).trim()
     const reasoning = fragmentText(fragments, ['THINK']).trim()
     if (!content && !reasoning) continue
+    const references = collectReferences(fragments)
     messages.push({
       role,
       content,
       reasoning,
+      ...(references.length ? { references } : {}),
       ...(attachments.length ? { attachments } : {}),
       createdAt: Math.round(Number(message.inserted_at || 0) * 1000) || Date.now(),
       dsMessageId: String(message.message_id ?? '') || null,

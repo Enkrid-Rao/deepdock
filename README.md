@@ -68,17 +68,24 @@ npm run icon         # 重新生成 build/icon.ico
 ### 发布新版本
 
 自动更新按 `latest.yml` 里的版本号比较，所以**版本号、tag、Release 资源三者必须对得上**，
-也不要在同一个版本号下悄悄换内容（已经装上的用户不会收到更新）：
+也不要在同一个版本号下悄悄换内容（已经装上的用户不会收到更新）。
 
-1. 改 `package.json` 的 `version`：新功能升 minor，修复升 patch；
-2. `npm run installer`，产物在 `release/builder/`；
-3. `git commit`、打 tag（如 `v1.3.0`）、`git push --follow-tags`；
-4. 在 GitHub 建同名 Release，上传这几个文件（**缺 `latest.yml` 更新就不会生效**）：
-   - `DeepDock-Setup-<version>.exe`
-   - `DeepDock-Setup-<version>.exe.blockmap`
-   - `latest.yml`
-   - `DeepDock-<version>-win-x64.zip`（绿色版，可选）
-5. 已安装的旧版本会在 6 小时内（或手动「检查更新」）发现它并自动下载。
+代码改动先 commit，工作区干净后跑：
+
+```bash
+npm run release -- 1.4.3 --notes notes/1.4.3.md
+```
+
+脚本会依次：校验 main / 干净工作区 / 版本号递增 → 改 `package.json` → 构建安装包与绿色版 →
+提交 `chore: release <version>` → 打 tag → 推送 main 和 tag（失败自动重试）→ 用 `gh` 建 Release
+并上传 exe / blockmap / `latest.yml` / zip（缺 latest.yml 更新不会生效）。
+
+- 只想要构建不发布：`npm run installer`
+- 预览步骤不执行：`--dry-run`；产物已构建好：`--skip-build`
+- 网络需要能访问 GitHub：脚本默认走 Clash 的 `http://127.0.0.1:7898`，
+  可用 `HTTPS_PROXY` / `DEEPDOCK_PROXY` / `--proxy` 覆盖。
+
+已安装的旧版本会在 6 小时内（或手动「检查更新」）发现它并自动下载。
 
 > 自动更新走 GitHub Releases，国内网络需要能访问 GitHub；应用跟随系统代理
 > （Clash 打开「系统代理」即可），没有单独的代理设置项。
@@ -206,7 +213,7 @@ DeepSeek 的 userToken 本身有效期很长，深坞会一直复用；如果哪
 | 图片与文件 | 粘贴、拖入或点「附件」上传图片 / 文档，发送时挂在同一个网页会话里；图片直接预览，文档显示成卡片；从网页导入的附件也能看 |
 | 深度思考 | 使用 DeepSeek 的思考模式，思考过程可折叠查看（思考只进折叠区，不会混进回复正文） |
 | 联网搜索 | 透传 `search_enabled` 参数 |
-| 流式输出 | 逐字渲染，Markdown / 代码高亮 / KaTeX 公式；联网搜索的 `[reference:N]` 显示成小角标；`$…$`、`\(…\)`、`\[…\]` 三种写法都能渲染（代码块里保持原文） |
+| 流式输出 | 逐字渲染，Markdown / 代码高亮 / KaTeX 公式；联网搜索的 `[reference:N]` 显示成可点击的小角标，点开直接跳到网页来源（旧对话打开时会自动补齐链接）；`$…$`、`\(…\)`、`\[…\]` 三种写法都能渲染（代码块里保持原文） |
 | 停止 / 重新生成 | 生成中可随时停止；对最后一条回复可重新生成 |
 | 行内改名 | 点顶栏标题直接改；对话、项目都能重命名 |
 | 设置页 | 独立的设置页（`Ctrl + ,`）：外观 / 字体 / 应用三栏；浅色 4 套、深色 4 套（默认「现代黑」，对齐网页端深色）；7 种强调色；衬线标题、纸张颗粒、减少动效 |

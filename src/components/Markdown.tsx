@@ -6,7 +6,7 @@ import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
 import { CopyButton } from './ui'
 import { normalizeMathDelimiters } from '../lib/math'
-import { rehypeCitations } from '../lib/citations'
+import { rehypeCitations, type CitationReference } from '../lib/citations'
 
 function nodeText(node: ReactNode): string {
   if (node == null || typeof node === 'boolean') return ''
@@ -42,8 +42,8 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 
 const components = {
   pre: CodeBlock,
-  a: ({ href, children }: { href?: string; children?: ReactNode }) => (
-    <a href={href} target="_blank" rel="noreferrer noopener">
+  a: ({ href, children, title }: { href?: string; children?: ReactNode; title?: string }) => (
+    <a href={href} target="_blank" rel="noreferrer noopener" title={title}>
       {children}
     </a>
   ),
@@ -52,10 +52,13 @@ const components = {
 export const Markdown = memo(function Markdown({
   content,
   variant = 'assistant',
+  references,
 }: {
   content: string
   /** `user` keeps the chat-bubble look while still rendering Markdown / math. */
   variant?: 'assistant' | 'user'
+  /** Citation links for `[reference:N]` markers in this message. */
+  references?: CitationReference[]
 }) {
   // DeepSeek writes LaTeX as `\(...\)` / `\[...\]`; remark-math only knows `$`.
   const source = useMemo(() => normalizeMathDelimiters(content), [content])
@@ -65,7 +68,7 @@ export const Markdown = memo(function Markdown({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[
-          rehypeCitations,
+          [rehypeCitations, { references }],
           [rehypeHighlight, { detect: false, ignoreMissing: true }],
           [rehypeKatex, { throwOnError: false, strict: false }],
         ]}

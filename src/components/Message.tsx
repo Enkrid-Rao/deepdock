@@ -188,7 +188,7 @@ export const MessageView = memo(function MessageView({
           <span />
         </div>
       ) : (
-        <Markdown content={shown} />
+        <Markdown content={shown} references={message.references} />
       )}
 
       {message.error ? (

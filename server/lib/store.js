@@ -361,6 +361,9 @@ export class Store {
       ...(Array.isArray(message.attachments) && message.attachments.length
         ? { attachments: message.attachments }
         : {}),
+      ...(Array.isArray(message.references) && message.references.length
+        ? { references: message.references }
+        : {}),
       ...(message.reasoning ? { reasoning: String(message.reasoning) } : {}),
       ...(message.dsMessageId ? { dsMessageId: String(message.dsMessageId) } : {}),
       ...(message.thinking ? { thinking: true } : {}),

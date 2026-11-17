@@ -1,4 +1,5 @@
 import type {
+  MessageReference,
   Attachment,
   Bootstrap,
   Conversation,
@@ -96,6 +97,12 @@ export const api = {
 
   getConversation: (id: string) => request<Conversation>(`/api/conversations/${id}`),
 
+  /** One-time backfill of citation links for messages stored without them. */
+  citations: (id: string) =>
+    request<{ references: Record<string, MessageReference[]> }>(
+      `/api/conversations/${id}/citations`,
+    ),
+
   updateConversation: (
     id: string,
     body: { title?: string; projectId?: string | null; pinned?: boolean },
@@ -158,11 +165,13 @@ export type StreamHandlers = {
   onStart?: (data: { userMessage: Message | null; assistantId: string }) => void
   onDelta?: (text: string) => void
   onReasoning?: (text: string) => void
+  onReferences?: (references: MessageReference[]) => void
   onDone?: (data: {
     assistantId: string
     conversation: ConversationMeta
     content?: string
     reasoning?: string
+    references?: MessageReference[]
   }) => void
   onError?: (message: string, code?: number | string | null) => void
   onAborted?: () => void
@@ -226,6 +235,9 @@ export async function streamChat(
         break
       case 'reasoning':
         handlers.onReasoning?.(payload.delta || '')
+        break
+      case 'references':
+        handlers.onReferences?.(Array.isArray(payload.references) ? payload.references : [])
         break
       case 'done':
         handlers.onDone?.(payload)

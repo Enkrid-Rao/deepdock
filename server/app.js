@@ -10,6 +10,7 @@ import { Credentials, normalizeCookie, normalizeToken } from './lib/credentials.
 import { DeepSeek, DeepSeekError, readCompletionStream } from './lib/deepseek.js'
 import { convertRemoteHistory, convertSessionPage } from './lib/remote-history.js'
 import { buildProjectMemoryPrompt } from './lib/project-memory.js'
+import { collectReferences } from './lib/references.js'
 import * as pow from './lib/pow.js'
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
@@ -336,6 +337,46 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
     }),
   )
 
+  // Older imports / streams did not store citation links. Fetch them once from
+  // the web history for messages that still only have [reference:N] text.
+  app.get(
+    '/api/conversations/:id/citations',
+    wrap(async (req, res) => {
+      const meta = store.getMeta(req.params.id)
+      if (!meta) return res.status(404).json({ error: 'NOT_FOUND' })
+      const conv = await store.getConversation(req.params.id)
+      const targets = conv.messages.filter(
+        (message) =>
+          message.role === 'assistant' &&
+          /\[reference:\d+\]/.test(message.content || '') &&
+          (!Array.isArray(message.references) || !message.references.length) &&
+          message.dsMessageId,
+      )
+      if (!targets.length || !meta.dsSessionId || mock || !credentials.connected) {
+        return res.json({ references: {} })
+      }
+      try {
+        const history = await deepseek.historyMessages(meta.dsSessionId)
+        const root = history?.data ?? history
+        const raw = Array.isArray(root?.chat_messages) ? root.chat_messages : []
+        const byDsId = new Map()
+        for (const message of raw) {
+          byDsId.set(String(message?.message_id ?? ''), collectReferences(message?.fragments))
+        }
+        const references = {}
+        for (const message of targets) {
+          const list = byDsId.get(String(message.dsMessageId))
+          if (!Array.isArray(list) || !list.length) continue
+          await store.updateMessage(meta.id, message.id, { references: list })
+          references[message.id] = list
+        }
+        res.json({ references })
+      } catch {
+        res.json({ references: {} })
+      }
+    }),
+  )
+
   app.patch(
     '/api/conversations/:id',
     wrap(async (req, res) => {
@@ -659,6 +700,7 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
 
       let content = ''
       let reasoning = ''
+      let references = []
       let upstreamMessageId = null
       let finished = false
 
@@ -667,6 +709,7 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
           await mockStream({ send, thinking, prompt, signal: controller.signal })
           content = mockContent(prompt)
           reasoning = thinking ? mockReasoning() : ''
+          references = mockReferences()
           finished = true
         } else {
           if (!credentials.connected) {
@@ -705,6 +748,7 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
               // deltas might have been rewritten upstream along the way.
               if (typeof evt.content === 'string') content = evt.content
               if (typeof evt.reasoning === 'string') reasoning = evt.reasoning
+              if (Array.isArray(evt.references)) references = evt.references
             } else if (evt.type === 'error') {
               throw new DeepSeekError(evt.message, { code: 'UPSTREAM' })
             }
@@ -716,6 +760,7 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
         await store.updateMessage(convId, assistant.id, {
           content,
           reasoning,
+          ...(references.length ? { references } : {}),
           streaming: false,
           aborted,
           error: aborted ? null : err.message || '生成失败',
@@ -733,6 +778,7 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
       await store.updateMessage(convId, assistant.id, {
         content,
         reasoning,
+        ...(references.length ? { references } : {}),
         streaming: false,
         error: finished ? null : '连接中断',
         ...(upstreamMessageId ? { dsMessageId: upstreamMessageId } : {}),
@@ -744,7 +790,8 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
       }
 
       cleanup()
-      send('done', { assistantId: assistant.id, conversation: store.getMeta(convId), content, reasoning })
+      if (references.length) send('references', { references })
+      send('done', { assistantId: assistant.id, conversation: store.getMeta(convId), content, reasoning, references })
       if (!res.writableEnded) res.end()
     }),
   )
@@ -1123,6 +1170,38 @@ function mockReasoning() {
   return '用户想要一个演示回复。先确认一下 dock 的布局，再给出一段简洁的中文示例，保持语气自然。'
 }
 
+function mockReferences() {
+  return [
+    {
+      index: 0,
+      id: 1,
+      type: 'TOOL_OPEN',
+      url: 'https://api-docs.deepseek.com/zh-cn/',
+      title: 'DeepSeek API 文档',
+      site: 'DeepSeek',
+      snippet: '',
+    },
+    {
+      index: 1,
+      id: 2,
+      type: 'TOOL_OPEN',
+      url: 'https://www.deepseek.com/',
+      title: 'DeepSeek',
+      site: 'DeepSeek',
+      snippet: '',
+    },
+    {
+      index: 2,
+      id: 3,
+      type: 'TOOL_OPEN',
+      url: 'https://github.com/Enkrid-Rao/deepdock',
+      title: 'Enkrid-Rao/deepdock',
+      site: 'GitHub',
+      snippet: '',
+    },
+  ]
+}
+
 function mockContent(prompt) {
   // Echo the first line only: slicing raw input mid-formula makes the demo
   // reply look broken, and the quote is just there to prove the round-trip.
@@ -1142,7 +1221,7 @@ function mockContent(prompt) {
 \\int_0^1 x^2 \\, dx = \\frac{1}{3}
 \\]
 
-联网搜索的引用会显示成小角标[reference:1][reference:2]，写成代码时保持原样：\`[reference:3]\`
+联网搜索的引用会显示成可点的小角标[reference:0][reference:1]，写成代码时保持原样：\`[reference:3]\`
 
 \`\`\`ts
 // 一个很小的例子

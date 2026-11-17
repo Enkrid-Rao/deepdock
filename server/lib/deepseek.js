@@ -2,6 +2,7 @@
 // Only the handful of endpoints DeepDock needs are implemented.
 
 import * as pow from './pow.js'
+import { collectReferences } from './references.js'
 
 const ORIGIN = 'https://chat.deepseek.com'
 const BASE = `${ORIGIN}/api/v0`
@@ -378,6 +379,7 @@ export async function* readCompletionStream(response, signal) {
     type: 'final',
     content: collectText(state, 'content'),
     reasoning: collectText(state, 'reasoning'),
+    references: collectReferences(state.data?.response?.fragments),
   }
 }
 

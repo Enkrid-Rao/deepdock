@@ -57,12 +57,23 @@ export type Attachment = {
   remotePath?: string | null
 }
 
+export type MessageReference = {
+  index: number
+  id: number | string | null
+  type?: string
+  url: string | null
+  title?: string
+  site?: string
+  snippet?: string
+}
+
 export type Message = {
   id: string
   role: Role
   content: string
   reasoning?: string
   attachments?: Attachment[]
+  references?: MessageReference[]
   createdAt: number
   streaming?: boolean
   error?: string | null
