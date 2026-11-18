@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { Composer } from './Composer'
 import { MessageView } from './Message'
+import { TurnNav } from './TurnNav'
 import { Menu, WaveArt } from './ui'
 import { projectColor, type Conversation, type MemoryRef, type Message, type Project } from '../lib/types'
 import type { DraftAttachment } from '../lib/attachments'
@@ -341,6 +342,8 @@ export function ChatView({
           <ArrowDown size={13} /> 回到最新
         </button>
       ) : null}
+
+      <TurnNav messages={messages} scrollerRef={scrollerRef} />
 
       <Composer
         draft={draft}

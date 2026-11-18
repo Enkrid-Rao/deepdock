@@ -131,7 +131,7 @@ export const MessageView = memo(function MessageView({
 
   if (message.role === 'user') {
     return (
-      <div className="msg msg-user">
+      <div className="msg msg-user" data-message-id={message.id}>
         {message.memoryRefs?.length ? (
           <div className="msg-refs">
             {message.memoryRefs.map((ref) => (
@@ -161,7 +161,7 @@ export const MessageView = memo(function MessageView({
   const empty = !message.content.trim()
 
   return (
-    <div className="msg msg-assistant" data-streaming={streaming}>
+    <div className="msg msg-assistant" data-message-id={message.id} data-streaming={streaming}>
       <div className="msg-head">
         <span className="brand-dot" />
         <span>DeepSeek</span>
