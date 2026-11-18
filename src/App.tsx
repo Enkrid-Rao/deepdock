@@ -1055,6 +1055,7 @@ export default function App() {
           attachments={draftAttachments}
           onAddFiles={addFiles}
           onRemoveAttachment={removeAttachment}
+          pendingProject={projects.find((project) => project.id === pendingProjectId) || null}
         />
       </div>
 

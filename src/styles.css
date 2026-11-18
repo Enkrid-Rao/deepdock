@@ -1627,6 +1627,21 @@ kbd {
   opacity: 0.8;
 }
 
+.empty-project {
+  margin-top: 16px;
+  padding: 5px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11.8px;
+}
+
+.empty-project strong {
+  color: var(--ink);
+  font-weight: 560;
+}
+
 .empty-foot {
   margin-top: 30px;
   color: var(--faint);

@@ -54,6 +54,7 @@ export function ChatView({
   attachments = [],
   onAddFiles,
   onRemoveAttachment,
+  pendingProject = null,
 }: {
   conversation: Conversation | null
   projects: Project[]
@@ -82,6 +83,7 @@ export function ChatView({
   attachments?: DraftAttachment[]
   onAddFiles: (files: FileList | File[] | null) => void
   onRemoveAttachment: (key: string) => void
+  pendingProject?: Project | null
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
@@ -298,6 +300,11 @@ export function ChatView({
               your <em>conversations</em>.
             </h1>
             <p>把散落在 DeepSeek 里的对话收进项目，下一次要找的时候，它就在原处。</p>
+            {pendingProject ? (
+              <div className="empty-project">
+                将在 <strong>{pendingProject.name}</strong> 中开始新对话
+              </div>
+            ) : null}
             <div className="prompt-grid">
               {QUICK_PROMPTS.map((p) => (
                 <button key={p.text} type="button" className="prompt-chip" onClick={() => quickPrompt(p.text)}>
