@@ -4,8 +4,11 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
+import katex from 'katex'
+// KaTeX ships mhchem as a plain contrib script (registers \ce support).
+import 'katex/contrib/mhchem'
 import { CopyButton } from './ui'
-import { normalizeMathDelimiters } from '../lib/math'
+import { mathTokenIndex, prepareMath, type MathFormula } from '../lib/math'
 import { rehypeCitations, type CitationReference } from '../lib/citations'
 
 function nodeText(node: ReactNode): string {
@@ -40,14 +43,43 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   )
 }
 
-const components = {
-  pre: CodeBlock,
-  a: ({ href, children, title }: { href?: string; children?: ReactNode; title?: string }) => (
+function Link({ href, children, title }: { href?: string; children?: ReactNode; title?: string }) {
+  return (
     <a href={href} target="_blank" rel="noreferrer noopener" title={title}>
       {children}
     </a>
-  ),
-} as never
+  )
+}
+
+/** Render one prepared formula with KaTeX; unsupported TeX degrades to a chip. */
+function MathFormula({ formula }: { formula: MathFormula }) {
+  const html = useMemo(() => {
+    try {
+      return katex.renderToString(formula.tex, {
+        displayMode: formula.display,
+        throwOnError: true,
+        strict: false,
+        trust: false,
+      })
+    } catch {
+      return null
+    }
+  }, [formula])
+
+  if (!html) {
+    return (
+      <code className="math-error" title={formula.tex.slice(0, 240)}>
+        {formula.tex}
+      </code>
+    )
+  }
+  return (
+    <span
+      className={formula.display ? 'math-block' : 'math-inline'}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
+}
 
 export const Markdown = memo(function Markdown({
   content,
@@ -60,8 +92,23 @@ export const Markdown = memo(function Markdown({
   /** Citation links for `[reference:N]` markers in this message. */
   references?: CitationReference[]
 }) {
-  // DeepSeek writes LaTeX as `\(...\)` / `\[...\]`; remark-math only knows `$`.
-  const source = useMemo(() => normalizeMathDelimiters(content), [content])
+  // Math is swapped for inline-code tokens before Markdown parsing, so it
+  // survives tables/lists/nested indentation; KaTeX renders those tokens.
+  const prepared = useMemo(() => prepareMath(content), [content])
+
+  const components = useMemo(
+    () => ({
+      pre: CodeBlock,
+      a: Link,
+      code: ({ className, children }: { className?: string; children?: ReactNode }) => {
+        const index = mathTokenIndex(nodeText(children))
+        const formula = index == null ? null : prepared.formulas[index]
+        if (formula) return <MathFormula formula={formula} />
+        return <code className={className}>{children}</code>
+      },
+    }),
+    [prepared],
+  )
 
   return (
     <div className={variant === 'user' ? 'prose prose-user' : 'prose'}>
@@ -72,9 +119,9 @@ export const Markdown = memo(function Markdown({
           [rehypeHighlight, { detect: false, ignoreMissing: true }],
           [rehypeKatex, { throwOnError: false, strict: false }],
         ]}
-        components={components}
+        components={components as never}
       >
-        {source}
+        {prepared.text}
       </ReactMarkdown>
     </div>
   )

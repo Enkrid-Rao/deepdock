@@ -1,8 +1,24 @@
 // DeepSeek writes LaTeX the way its own web front-end does: `\(inline\)` for
 // inline math and `\[display\]` for display math. remark-math only understands
-// `$...$` / `$$...$$`, and CommonMark swallows the backslash of `\(` while
-// parsing, so the delimiters are rewritten to dollars *before* the markdown is
-// parsed. Fenced code blocks and inline code spans are left untouched.
+// `$...$` / `$$...$$`, and block-level math is fragile inside lists/tables
+// (indentation decides whether it is math or a code block).
+//
+// So instead of rewriting delimiters, every math expression is replaced with a
+// private inline-code token before Markdown parsing; the renderer turns those
+// tokens into KaTeX output. Inline code survives tables, lists, blockquotes and
+// emphasis unchanged, so the math can never be swallowed by a list/code block.
+// Fenced code blocks and inline code spans are left untouched.
+
+export type MathFormula = { tex: string; display: boolean }
+export type PreparedMath = { text: string; formulas: MathFormula[] }
+
+const TOKEN = /^@@DDMATH(\d+)@@$/
+
+/** Index of the math formula behind an inline-code token, or null. */
+export function mathTokenIndex(value: string): number | null {
+  const match = TOKEN.exec(value.trim())
+  return match ? Number(match[1]) : null
+}
 
 type Segment = { code: boolean; text: string }
 
@@ -25,8 +41,6 @@ function splitFenced(source: string): Segment[] {
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]
-    // Keep the newline that follows this line so nothing is glued together
-    // when the segments are concatenated again.
     const chunk = i < lines.length - 1 ? `${line}\n` : line
 
     if (fence) {
@@ -112,83 +126,56 @@ function findClose(text: string, from: number, marker: string): number {
   return -1
 }
 
-function isLineStart(text: string, index: number): boolean {
-  for (let i = index - 1; i >= 0; i -= 1) {
-    const ch = text[i]
-    if (ch === '\n') return true
-    if (ch !== ' ' && ch !== '\t') return false
-  }
-  return true
-}
-
-function isLineEnd(text: string, index: number): boolean {
-  for (let i = index; i < text.length; i += 1) {
-    const ch = text[i]
-    if (ch === '\n') return true
-    if (ch !== ' ' && ch !== '\t') return false
-  }
-  return true
-}
-
-const trim = (value: string) => value.replace(/^\s+|\s+$/g, '')
-
-function convertPlain(text: string): string {
-  if (!text.includes('\\(') && !text.includes('\\[')) return text
+function convertPlain(text: string, formulas: MathFormula[]): string {
+  if (!text.includes('\\(') && !text.includes('\\[') && !text.includes('$$')) return text
 
   let out = ''
   let i = 0
+  const token = (formula: MathFormula) => {
+    const index = formulas.length
+    formulas.push(formula)
+    return `\`@@DDMATH${index}@@\``
+  }
+
   while (i < text.length) {
     const ch = text[i]
-    if (ch !== '\\' || i + 1 >= text.length) {
+
+    if (ch === '\\' && i + 1 < text.length) {
+      const next = text[i + 1]
+      if (next === '\\') {
+        out += '\\\\'
+        i += 2
+        continue
+      }
+      if (next === '(' || next === '[') {
+        const close = findClose(text, i + 2, next === '(' ? '\\)' : '\\]')
+        if (close >= 0) {
+          const body = text.slice(i + 2, close).trim()
+          if (body) {
+            out += token({ tex: body, display: next === '[' })
+            i = close + 2
+            continue
+          }
+        }
+      }
       out += ch
       i += 1
       continue
     }
 
-    const next = text[i + 1]
-    if (next === '\\') {
-      // Escaped backslash: keep the pair as-is so `\\(` never becomes math.
-      out += '\\\\'
-      i += 2
-      continue
-    }
-
-    const closer = next === '(' ? '\\)' : next === '[' ? '\\]' : null
-    if (!closer) {
-      out += ch
-      i += 1
-      continue
-    }
-
-    const close = findClose(text, i + 2, closer)
-    if (close >= 0) {
-      const raw = text.slice(i + 2, close)
-      if (next === '(') {
-        const body = trim(raw)
+    if (ch === '$' && text[i + 1] === '$') {
+      const close = text.indexOf('$$', i + 2)
+      if (close >= 0) {
+        const body = text.slice(i + 2, close).trim()
         if (body) {
-          out += `$${body}$`
-          i = close + 2
-          continue
-        }
-      } else if (isLineStart(text, i) && isLineEnd(text, close + 2)) {
-        // Display math on its own line(s): keep the original line breaks and
-        // indentation, so block math inside a list item stays in that item
-        // instead of being moved to column 0 (which breaks the $$ fence).
-        const body = trim(raw)
-        if (body) {
-          out += raw.includes('\n') ? `$$${raw}$$` : `$${body}$`
-          i = close + 2
-          continue
-        }
-      } else {
-        // Display delimiters used mid-sentence still deserve a real formula.
-        const body = trim(raw)
-        if (body) {
-          out += `$${body}$`
+          out += token({ tex: body, display: true })
           i = close + 2
           continue
         }
       }
+      out += '$$'
+      i += 2
+      continue
     }
 
     out += ch
@@ -199,12 +186,15 @@ function convertPlain(text: string): string {
 }
 
 /**
- * Rewrite `\(...\)` / `\[...\]` into `$...$` / `$$...$$`, skipping code.
- * The input is returned unchanged when it contains no LaTeX delimiters.
+ * Replace `\(...\)`, `\[...\]` and `$$...$$` with inline-code tokens and keep
+ * the TeX in `formulas`. Code fences / inline code are not touched.
  */
-export function normalizeMathDelimiters(source: string): string {
-  if (!source.includes('\\(') && !source.includes('\\[')) return source
+export function prepareMath(source: string): PreparedMath {
+  if (!source.includes('\\(') && !source.includes('\\[') && !source.includes('$$')) {
+    return { text: source, formulas: [] }
+  }
 
+  const formulas: MathFormula[] = []
   let out = ''
   for (const block of splitFenced(source)) {
     if (block.code) {
@@ -212,8 +202,8 @@ export function normalizeMathDelimiters(source: string): string {
       continue
     }
     for (const part of splitInlineCode(block.text)) {
-      out += part.code ? part.text : convertPlain(part.text)
+      out += part.code ? part.text : convertPlain(part.text, formulas)
     }
   }
-  return out
+  return { text: out, formulas }
 }

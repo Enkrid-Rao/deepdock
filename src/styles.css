@@ -2066,6 +2066,40 @@ kbd {
   padding: 2px 0;
 }
 
+/* Formulas swapped in through inline-code tokens. */
+.math-block {
+  display: block;
+  margin: 12px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+}
+
+.math-block .katex-display {
+  margin: 0;
+}
+
+.math-inline {
+  display: inline;
+}
+
+/* KaTeX could not parse this TeX: show it as a neutral code chip instead of a
+   red error blob. */
+.math-error,
+.katex-error {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  color: var(--ink-2) !important;
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* DeepSeek writes search citations inline as [reference:N]; show them as the
    small raised chips the web front-end uses instead of raw bracket text. */
 .md-cite {
