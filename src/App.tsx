@@ -108,6 +108,7 @@ export default function App() {
   const [search, setSearch] = useState(() => readBool(SEARCH_KEY))
   const [appearance, setAppearance] = useState<Appearance>(loadAppearance)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_KEY) === 'collapsed'
@@ -155,7 +156,6 @@ export default function App() {
   const abortRef = useRef<AbortController | null>(null)
   const selectSeq = useRef(0)
   const recoveringRef = useRef(false)
-  const creatingChatRef = useRef(false)
 
   const toast = useCallback((text: string) => {
     const id = Date.now() + Math.random()
@@ -270,6 +270,7 @@ export default function App() {
     async (id: string) => {
       const seq = ++selectSeq.current
       setActiveId(id)
+      setPendingProjectId(null)
       setDrawer(false)
       setDraft('')
       resetDrafts()
@@ -571,11 +572,14 @@ export default function App() {
     let conv = activeConv
     if (!conv) {
       try {
-        const meta = await api.createConversation({})
+        const meta = await api.createConversation({ projectId: pendingProjectId })
         conv = { ...meta, messages: [] }
-        setConversations((prev) => sortConversations([meta, ...prev]))
+        setConversations((prev) =>
+          sortConversations([meta, ...prev.filter((item) => item.id !== meta.id)]),
+        )
         setActiveId(meta.id)
         setActiveConv(conv)
+        setPendingProjectId(null)
       } catch {
         toast('创建对话失败')
         return
@@ -583,7 +587,7 @@ export default function App() {
     }
     resetDrafts()
     await runStream(conv, { text, attachments: files })
-  }, [activeConv, draft, readyAttachments, resetDrafts, runStream, streamingId, toast])
+  }, [activeConv, draft, pendingProjectId, readyAttachments, resetDrafts, runStream, streamingId, toast])
 
   const regenerate = useCallback(async () => {
     if (streamingId || !activeConv) return
@@ -595,58 +599,22 @@ export default function App() {
   /* ------------------------------------------------------------- actions */
 
   const newChat = useCallback(
-    async (projectId?: string | null) => {
+    (projectId?: string | null) => {
       if (streamingId) {
         toast('等这次回复结束再开新对话')
         return
       }
       setDrawer(false)
-      // No explicit project: stay in the project of the conversation the user
-      // is currently looking at, instead of falling back to 未分组.
-      const target = projectId ?? activeConv?.projectId ?? null
-
-      // An empty conversation is disposable: reuse it (moving it to the target
-      // project if needed) instead of stacking another empty entry.
-      if (activeConv && activeConv.messages.length === 0) {
-        if (activeConv.projectId === target) {
-          setDraft('')
-          resetDrafts()
-          return
-        }
-        try {
-          const updated = await api.updateConversation(activeConv.id, { projectId: target })
-          setConversations((prev) =>
-            sortConversations(prev.map((item) => (item.id === updated.id ? updated : item))),
-          )
-          setActiveConv((prev) => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev))
-          setDraft('')
-          resetDrafts()
-          return
-        } catch {
-          /* fall through and create a fresh one */
-        }
-      }
-
-      // Double-clicking 新对话 fires twice before React state updates; the
-      // guard keeps a single conversation.
-      if (creatingChatRef.current) return
-      creatingChatRef.current = true
-      try {
-        const meta = await api.createConversation({ projectId: target })
-        setConversations((prev) =>
-          sortConversations([meta, ...prev.filter((item) => item.id !== meta.id)]),
-        )
-        setActiveId(meta.id)
-        setActiveConv({ ...meta, messages: [] })
-        setDraft('')
-        resetDrafts()
-      } catch {
-        toast('创建对话失败')
-      } finally {
-        creatingChatRef.current = false
-      }
+      // Same as chat.deepseek.com: a new chat is just a blank view. Nothing is
+      // written to history until the first message is sent.
+      const target = projectId ?? activeConv?.projectId ?? pendingProjectId ?? null
+      setActiveId(null)
+      setActiveConv(null)
+      setPendingProjectId(target)
+      setDraft('')
+      resetDrafts()
     },
-    [activeConv, resetDrafts, streamingId, toast],
+    [activeConv, pendingProjectId, resetDrafts, streamingId, toast],
   )
 
   // Ctrl+N follows the same rule (and creates the conversation immediately), so
