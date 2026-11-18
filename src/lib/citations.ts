@@ -16,9 +16,43 @@ export type CitationReference = {
   url?: string | null
   title?: string | null
   site?: string | null
+  snippet?: string | null
 }
 
 const CITATION = /\[reference:(\d+)\]/g
+
+function element(tagName: string, className: string, text: string): HastElement {
+  return {
+    type: 'element',
+    tagName,
+    properties: { className: [className] },
+    children: [{ type: 'text', value: text }],
+  }
+}
+
+function previewCard(target: CitationReference): HastElement {
+  const url = String(target.url || '')
+  let host = ''
+  try {
+    host = new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    /* keep the raw url below */
+  }
+  const shownUrl = url.replace(/^https?:\/\//, '')
+  const title = String(target.title || '').trim()
+  const snippet = String(target.snippet || '').trim()
+  const children: HastNode[] = []
+  if (target.site || host) children.push(element('span', 'md-cite-site', target.site || host))
+  children.push(element('span', 'md-cite-title', title || shownUrl))
+  children.push(element('span', 'md-cite-url', shownUrl))
+  if (snippet) children.push(element('span', 'md-cite-snippet', snippet))
+  return {
+    type: 'element',
+    tagName: 'span',
+    properties: { className: ['md-cite-card'], ariaHidden: 'true' },
+    children,
+  }
+}
 
 function citationNode(index: number, references: CitationReference[]): HastElement {
   const target = references[index]
@@ -30,12 +64,13 @@ function citationNode(index: number, references: CitationReference[]): HastEleme
       tagName: 'a',
       properties: {
         href: target.url,
-        title: [target.title, target.site].filter(Boolean).join(' · ') || target.url,
         target: '_blank',
         rel: 'noreferrer noopener',
+        ariaLabel: `打开来源 ${label}：${target.title || target.url}`,
       },
       children: [{ type: 'text', value: label }],
     })
+    children.push(previewCard(target))
   } else {
     children.push({ type: 'text', value: label })
   }
