@@ -171,10 +171,12 @@ function convertPlain(text: string): string {
           continue
         }
       } else if (isLineStart(text, i) && isLineEnd(text, close + 2)) {
-        // Display math on its own line(s): `$$ ... $$` becomes a math block.
+        // Display math on its own line(s): keep the original line breaks and
+        // indentation, so block math inside a list item stays in that item
+        // instead of being moved to column 0 (which breaks the $$ fence).
         const body = trim(raw)
         if (body) {
-          out += `$$\n${body}\n$$`
+          out += raw.includes('\n') ? `$$${raw}$$` : `$${body}$`
           i = close + 2
           continue
         }
