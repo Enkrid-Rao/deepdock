@@ -137,6 +137,15 @@ export const api = {
       body: JSON.stringify({ conversationId }),
     }),
 
+  /** Import the newest web sessions that are not in the local store yet. */
+  autoSync: () =>
+    request<{
+      checked: number
+      imported: number
+      conversations: { id: string; conversationId: string; title: string; messages: number }[]
+      all: ConversationMeta[]
+    }>('/api/sync/auto', { method: 'POST' }),
+
   /** Send the raw file to the local API, which uploads it to the web account. */
   uploadAttachment: async (file: File): Promise<Attachment> => {
     const res = await fetch('/api/attachments', {
@@ -172,9 +181,10 @@ export type StreamHandlers = {
     content?: string
     reasoning?: string
     references?: MessageReference[]
+    dsMessageId?: string | null
   }) => void
-  onError?: (message: string, code?: number | string | null) => void
-  onAborted?: () => void
+  onError?: (message: string, code?: number | string | null, dsMessageId?: string | null) => void
+  onAborted?: (data?: { dsMessageId?: string | null }) => void
 }
 
 export async function streamChat(
@@ -243,7 +253,115 @@ export async function streamChat(
         handlers.onDone?.(payload)
         break
       case 'error':
-        handlers.onError?.(payload.message || '生成失败', payload.code ?? null)
+        handlers.onError?.(payload.message || '生成失败', payload.code ?? null, payload.dsMessageId ?? null)
+        break
+      case 'aborted':
+        handlers.onAborted?.(payload)
+        break
+      default:
+        break
+    }
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary >= 0) {
+        const frame = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        let event = 'message'
+        const dataLines: string[] = []
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim()
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+        }
+        if (dataLines.length) dispatch(event, dataLines.join('\n'))
+        boundary = buffer.indexOf('\n\n')
+      }
+    }
+  } catch (err) {
+    if (signal.aborted) handlers.onAborted?.()
+    else handlers.onError?.('连接中断了，回复可能不完整。')
+  }
+}
+
+
+export type ContinueHandlers = {
+  onDelta?: (text: string) => void
+  onReasoning?: (text: string) => void
+  onReferences?: (references: MessageReference[]) => void
+  onDone?: (data: {
+    messageId: string
+    content: string
+    reasoning?: string
+    references?: MessageReference[]
+  }) => void
+  onError?: (message: string) => void
+  onAborted?: () => void
+}
+
+/** Continue an interrupted assistant message (web's 「继续生成」). */
+export async function continueMessage(
+  conversationId: string,
+  messageId: string,
+  handlers: ContinueHandlers,
+  signal: AbortSignal,
+  base: { content?: string; reasoning?: string } = {},
+): Promise<void> {
+  let res: Response
+  try {
+    res = await fetch(`/api/conversations/${conversationId}/continue`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messageId, content: base.content, reasoning: base.reasoning }),
+      signal,
+    })
+  } catch {
+    if (signal.aborted) handlers.onAborted?.()
+    else handlers.onError?.('无法连接到本地服务，请确认 DeepDock 服务仍在运行。')
+    return
+  }
+
+  if (!res.ok || !res.body) {
+    let message = `继续生成失败（${res.status}）`
+    try {
+      const payload = await res.json()
+      if (payload?.message) message = payload.message
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(message)
+    return
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const dispatch = (event: string, raw: string) => {
+    let payload: any
+    try {
+      payload = JSON.parse(raw)
+    } catch {
+      return
+    }
+    switch (event) {
+      case 'delta':
+        handlers.onDelta?.(payload.delta || '')
+        break
+      case 'reasoning':
+        handlers.onReasoning?.(payload.delta || '')
+        break
+      case 'references':
+        handlers.onReferences?.(Array.isArray(payload.references) ? payload.references : [])
+        break
+      case 'done':
+        handlers.onDone?.(payload)
+        break
+      case 'error':
+        handlers.onError?.(payload.message || '继续生成失败')
         break
       case 'aborted':
         handlers.onAborted?.()
@@ -272,7 +390,7 @@ export async function streamChat(
         boundary = buffer.indexOf('\n\n')
       }
     }
-  } catch (err) {
+  } catch {
     if (signal.aborted) handlers.onAborted?.()
     else handlers.onError?.('连接中断了，回复可能不完整。')
   }

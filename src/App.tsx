@@ -8,7 +8,7 @@ import { SyncDialog } from './components/SyncDialog'
 import { SettingsPage } from './components/SettingsPage'
 import { ProjectMemoryDialog } from './components/ProjectMemoryDialog'
 import { Logo, Toaster, type ToastItem } from './components/ui'
-import { api, ApiError, streamChat } from './lib/api'
+import { api, ApiError, continueMessage as continueStream, streamChat } from './lib/api'
 import {
   applyAppearance,
   loadAppearance,
@@ -68,6 +68,7 @@ if (desktop) {
 const THINKING_KEY = 'deepdock:thinking'
 const SEARCH_KEY = 'deepdock:search'
 const SIDEBAR_KEY = 'deepdock:sidebar'
+const AUTO_SYNC_KEY = 'deepdock:auto-sync'
 
 function readBool(key: string, fallback = false): boolean {
   try {
@@ -109,6 +110,15 @@ export default function App() {
   const [appearance, setAppearance] = useState<Appearance>(loadAppearance)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [pendingProjectId, setPendingProjectId] = useState<string | null>(null)
+  const [continuingId, setContinuingId] = useState<string | null>(null)
+  const [autoSync, setAutoSync] = useState(() => {
+    try {
+      return localStorage.getItem(AUTO_SYNC_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  const [syncingWeb, setSyncingWeb] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_KEY) === 'collapsed'
@@ -156,6 +166,7 @@ export default function App() {
   const abortRef = useRef<AbortController | null>(null)
   const selectSeq = useRef(0)
   const recoveringRef = useRef(false)
+  const syncingWebRef = useRef(false)
 
   const toast = useCallback((text: string) => {
     const id = Date.now() + Math.random()
@@ -472,6 +483,8 @@ export default function App() {
         content?: string
         reasoning?: string
         references?: MessageReference[]
+        aborted?: boolean
+        dsMessageId?: string | null
       }) => {
         const s = streamRef.current
         if (s?.raf) cancelAnimationFrame(s.raf)
@@ -503,6 +516,24 @@ export default function App() {
         },
         {
           onStart: (data) => {
+            // The server owns message ids; switch the optimistic local id to it
+            // so later actions (stop, continue) can address the stored message.
+            const localAssistantId = asstMsg.id
+            if (data.assistantId && data.assistantId !== localAssistantId) {
+              asstMsg.id = data.assistantId
+              if (streamRef.current) streamRef.current.asstId = data.assistantId
+              setActiveConv((previous) => {
+                if (!previous || previous.id !== convId) return previous
+                return {
+                  ...previous,
+                  messages: previous.messages.map((message) =>
+                    message.id === localAssistantId
+                      ? { ...message, id: data.assistantId }
+                      : message,
+                  ),
+                }
+              })
+            }
             if (regenerate || !data.userMessage) return
             const stored = data.userMessage
             setActiveConv((previous) => {
@@ -534,6 +565,7 @@ export default function App() {
               content: data.content,
               reasoning: data.reasoning,
               references: data.references,
+              dsMessageId: data.dsMessageId ?? undefined,
             })
             if (data.conversation) {
               setConversations((prev) =>
@@ -546,14 +578,15 @@ export default function App() {
               )
             }
           },
-          onError: (message, code) => {
-            settle({ error: message })
+          onError: (message, code, dsMessageId) => {
+            settle({ error: message, ...(dsMessageId ? { dsMessageId } : {}) })
             toast(message)
             if (code === 40003 || code === 40002 || code === 'unauthorized') {
               void recoverAuth(true)
             }
           },
-          onAborted: () => settle({}),
+          onAborted: (data) =>
+            settle({ aborted: true, ...(data?.dsMessageId ? { dsMessageId: data.dsMessageId } : {}) }),
         },
         controller.signal,
       )
@@ -595,6 +628,59 @@ export default function App() {
     if (!lastUser) return
     await runStream(activeConv, { text: lastUser.content, regenerate: true })
   }, [activeConv, runStream, streamingId])
+
+  const continueReply = useCallback(
+    async (conv: Conversation, message: Message) => {
+      if (streamingId || continuingId) return
+      setContinuingId(message.id)
+      setStreamingId(conv.id)
+      const controller = new AbortController()
+      abortRef.current = controller
+      const patch = (fn: (item: Message) => Message) => {
+        setActiveConv((prev) => {
+          if (!prev || prev.id !== conv.id) return prev
+          return {
+            ...prev,
+            messages: prev.messages.map((item) => (item.id === message.id ? fn(item) : item)),
+          }
+        })
+      }
+      try {
+        await continueStream(
+          conv.id,
+          message.id,
+          {
+            onDelta: (delta) => patch((item) => ({ ...item, content: item.content + delta })),
+            onReasoning: (delta) =>
+              patch((item) => ({ ...item, reasoning: (item.reasoning || '') + delta })),
+            onReferences: (references) => patch((item) => ({ ...item, references })),
+            onDone: (data) =>
+              patch((item) => ({
+                ...item,
+                content: data.content ?? item.content,
+                reasoning: data.reasoning ?? item.reasoning,
+                references: data.references || item.references,
+                error: null,
+                aborted: false,
+                streaming: false,
+              })),
+            onError: (messageText) => {
+              patch((item) => ({ ...item, error: messageText }))
+              toast(messageText)
+            },
+            onAborted: () => patch((item) => ({ ...item, aborted: true })),
+          },
+          controller.signal,
+          { content: message.content, reasoning: message.reasoning },
+        )
+      } finally {
+        setContinuingId(null)
+        setStreamingId(null)
+        abortRef.current = null
+      }
+    },
+    [continuingId, streamingId, toast],
+  )
 
   /* ------------------------------------------------------------- actions */
 
@@ -917,6 +1003,54 @@ export default function App() {
     [projects],
   )
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(AUTO_SYNC_KEY, autoSync ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+  }, [autoSync])
+
+  const syncWebNow = useCallback(
+    async (manual = false) => {
+      if (syncingWebRef.current) return
+      if (!boot?.connected) {
+        if (manual) toast('先连接 DeepSeek 账号')
+        return
+      }
+      syncingWebRef.current = true
+      setSyncingWeb(true)
+      try {
+        const result = await api.autoSync()
+        if (Array.isArray(result.all) && result.all.length) {
+          setConversations(sortConversations(result.all))
+        }
+        if (result.imported > 0) {
+          toast(`已从网页同步 ${result.imported} 个对话`)
+        } else if (manual) {
+          toast('没有新的网页对话')
+        }
+      } catch (err) {
+        if (manual) toast(err instanceof ApiError ? err.message : '同步失败，请稍后再试')
+      } finally {
+        syncingWebRef.current = false
+        setSyncingWeb(false)
+      }
+    },
+    [boot?.connected, toast],
+  )
+
+  useEffect(() => {
+    if (!autoSync || !boot?.connected || boot.mock) return undefined
+    const run = () => void syncWebNow(false)
+    const first = setTimeout(run, 15000)
+    const timer = setInterval(run, 10 * 60 * 1000)
+    return () => {
+      clearTimeout(first)
+      clearInterval(timer)
+    }
+  }, [autoSync, boot?.connected, boot?.mock, syncWebNow])
+
   const sidebarActions = useMemo(
     () => ({
       newChat,
@@ -1022,6 +1156,10 @@ export default function App() {
           conversation={activeConv}
           projects={projects}
           streaming={Boolean(streamingId)}
+          continuingId={continuingId}
+          onContinue={(message) => {
+            if (activeConv) void continueReply(activeConv, message)
+          }}
           draft={draft}
           onDraftChange={setDraft}
           onSend={() => void send()}
@@ -1129,6 +1267,10 @@ export default function App() {
         onInstallUpdate={() => void desktop?.installUpdate?.()}
         onOpenDataFolder={() => void accountAction('dataFolder')}
         updateState={updateState}
+        autoSync={autoSync}
+        onToggleAutoSync={setAutoSync}
+        onSyncNow={() => void syncWebNow(true)}
+        syncingWeb={syncingWeb}
       />
 
       <Toaster toasts={toasts} />

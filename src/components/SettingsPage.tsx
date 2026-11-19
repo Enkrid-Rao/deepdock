@@ -269,6 +269,10 @@ export function SettingsPage({
   onInstallUpdate,
   onOpenDataFolder,
   updateState = null,
+  autoSync = false,
+  onToggleAutoSync,
+  onSyncNow,
+  syncingWeb = false,
 }: {
   open: boolean
   appearance: Appearance
@@ -279,6 +283,10 @@ export function SettingsPage({
   onInstallUpdate: () => void
   onOpenDataFolder: () => void
   updateState?: UpdateState | null
+  autoSync?: boolean
+  onToggleAutoSync: (value: boolean) => void
+  onSyncNow: () => void
+  syncingWeb?: boolean
 }) {
   const [section, setSection] = useState<Section>('appearance')
   const [info, setInfo] = useState<DesktopInfo | null>(null)
@@ -598,6 +606,30 @@ export function SettingsPage({
                       {info?.portable
                         ? '数据就在程序目录的 DeepDock-data 里，升级或搬走时连同它一起带走；删掉整个文件夹就是卸载。'
                         : '自动更新走 GitHub，国内网络需要能访问 GitHub（可开启系统代理）。'}
+                    </p>
+                  </Card>
+
+                  <Card title="网页同步" hint="把网页端新出现的对话自动收进本机。">
+                    <div className="toggle-list">
+                      <Toggle
+                        label="自动同步网页对话"
+                        hint="每 10 分钟检查一次，只导入本地还没有的新对话"
+                        checked={autoSync}
+                        onChange={onToggleAutoSync}
+                      />
+                    </div>
+                    <div className="settings-actions">
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={onSyncNow}
+                        disabled={syncingWeb}
+                      >
+                        <RefreshCw size={14} /> {syncingWeb ? '同步中…' : '立即同步'}
+                      </button>
+                    </div>
+                    <p className="settings-note">
+                      需要保持账号已连接；手动「从网页同步对话」仍然可以单独挑选。
                     </p>
                   </Card>
                 </div>

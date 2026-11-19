@@ -706,6 +706,7 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
 
       try {
         if (mock) {
+          upstreamMessageId = `mock-${assistant.id}`
           await mockStream({ send, thinking, prompt, signal: controller.signal })
           content = mockContent(prompt)
           reasoning = thinking ? mockReasoning() : ''
@@ -757,19 +758,39 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
         }
       } catch (err) {
         const aborted = controller.signal.aborted || err.name === 'AbortError'
+        // Aborted before the upstream "meta" event? Look up the assistant
+        // message id in history so 「继续生成」 can still work.
+        if (!upstreamMessageId && !mock && meta.dsSessionId) {
+          try {
+            const history = await deepseek.historyMessages(meta.dsSessionId)
+            const root = history?.data ?? history
+            const raw = Array.isArray(root?.chat_messages) ? root.chat_messages : []
+            const last = [...raw]
+              .reverse()
+              .find((item) => String(item?.role || '').toUpperCase() !== 'USER')
+            if (last?.message_id != null) upstreamMessageId = String(last.message_id)
+          } catch {
+            /* ignore */
+          }
+        }
         await store.updateMessage(convId, assistant.id, {
           content,
           reasoning,
           ...(references.length ? { references } : {}),
+          ...(upstreamMessageId ? { dsMessageId: upstreamMessageId } : {}),
           streaming: false,
           aborted,
           error: aborted ? null : err.message || '生成失败',
         })
         cleanup()
         if (!aborted) {
-          send('error', { message: friendlyError(err), code: err.code || null })
+          send('error', {
+            message: friendlyError(err),
+            code: err.code || null,
+            dsMessageId: upstreamMessageId || null,
+          })
         } else {
-          send('aborted', {})
+          send('aborted', { dsMessageId: upstreamMessageId || null })
         }
         if (!res.writableEnded) res.end()
         return
@@ -791,8 +812,192 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
 
       cleanup()
       if (references.length) send('references', { references })
-      send('done', { assistantId: assistant.id, conversation: store.getMeta(convId), content, reasoning, references })
+      send('done', {
+        assistantId: assistant.id,
+        conversation: store.getMeta(convId),
+        content,
+        reasoning,
+        references,
+        dsMessageId: upstreamMessageId || null,
+      })
       if (!res.writableEnded) res.end()
+    }),
+  )
+
+  // Continue an interrupted / incomplete assistant message (the web's
+  // 「继续生成」 button). The upstream message id is the assistant's dsMessageId.
+  app.post(
+    '/api/conversations/:id/continue',
+    wrap(async (req, res) => {
+      const convId = req.params.id
+      const meta = store.getMeta(convId)
+      if (!meta) return res.status(404).json({ error: 'NOT_FOUND' })
+      if (activeStreams.has(convId)) {
+        return res.status(409).json({ error: 'BUSY', message: '这个对话还在生成中。' })
+      }
+
+      const conv = await store.getConversation(convId)
+      const messageId = String(req.body?.messageId || '')
+      const message = conv.messages.find(
+        (item) => item.id === messageId && item.role === 'assistant',
+      )
+      if (!message) return res.status(404).json({ error: 'NOT_FOUND' })
+      if (!mock && (!message.dsMessageId || !meta.dsSessionId || !credentials.connected)) {
+        return res.status(400).json({
+          error: 'NOT_CONTINUABLE',
+          message: '这条回复没有可继续的消息 id，请重新生成。',
+        })
+      }
+
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache, no-transform',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      })
+      if (res.flushHeaders) res.flushHeaders()
+
+      const send = (event, data) => {
+        if (res.writableEnded) return
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+      }
+
+      const controller = new AbortController()
+      activeStreams.set(convId, controller)
+      const cleanup = () => activeStreams.delete(convId)
+      res.on('close', () => {
+        if (!res.writableEnded) controller.abort()
+      })
+
+      const providedContent = typeof req.body?.content === 'string' ? req.body.content : ''
+      const providedReasoning = typeof req.body?.reasoning === 'string' ? req.body.reasoning : ''
+      const storedContent = String(message.content || '')
+      const storedReasoning = String(message.reasoning || '')
+      // Keep the partial text the client already rendered when the server had
+      // not persisted it yet (e.g. abort during the first delta).
+      const originalContent =
+        providedContent.length > storedContent.length && providedContent.startsWith(storedContent)
+          ? providedContent
+          : storedContent
+      const originalReasoning =
+        providedReasoning.length > storedReasoning.length &&
+        providedReasoning.startsWith(storedReasoning)
+          ? providedReasoning
+          : storedReasoning
+      let content = originalContent
+      let reasoning = originalReasoning
+      let references = Array.isArray(message.references) ? [...message.references] : []
+      let finalContent = null
+      let finalReasoning = null
+
+      send('start', { messageId })
+
+      try {
+        if (mock) {
+          const suffix = '（继续生成：这是演示模式下接上的内容。）'
+          for (const chunk of suffix.match(/.{1,4}/gs) || []) {
+            content += chunk
+            send('delta', { delta: chunk })
+            await new Promise((resolve) => setTimeout(resolve, 45))
+          }
+        } else {
+          const upstream = await deepseek.continueCompletion({
+            sessionId: meta.dsSessionId,
+            messageId: message.dsMessageId,
+            fallbackToResume: true,
+            signal: controller.signal,
+          })
+          for await (const evt of readCompletionStream(upstream, controller.signal)) {
+            if (evt.type === 'content') {
+              content += evt.delta
+              send('delta', { delta: evt.delta })
+            } else if (evt.type === 'reasoning') {
+              reasoning += evt.delta
+              send('reasoning', { delta: evt.delta })
+            } else if (evt.type === 'references') {
+              if (Array.isArray(evt.references) && evt.references.length) {
+                references = evt.references
+                send('references', { references })
+              }
+            } else if (evt.type === 'final') {
+              if (typeof evt.content === 'string') finalContent = evt.content
+              if (typeof evt.reasoning === 'string') finalReasoning = evt.reasoning
+              if (Array.isArray(evt.references) && evt.references.length) {
+                references = evt.references
+              }
+            } else if (evt.type === 'error') {
+              throw new DeepSeekError(evt.message, { code: 'UPSTREAM' })
+            }
+          }
+
+          // The continue stream only carries the appended part; history is the
+          // authoritative full message (and also covers the resume fallback).
+          const history = await deepseek
+            .historyMessages(meta.dsSessionId)
+            .catch(() => null)
+          const root = history?.data ?? history
+          const raw = Array.isArray(root?.chat_messages) ? root.chat_messages : []
+          const remote = raw.find(
+            (item) => String(item?.message_id) === String(message.dsMessageId),
+          )
+          if (remote) {
+            const fragments = Array.isArray(remote.fragments) ? remote.fragments : []
+            const readFragments = (types) =>
+              fragments
+                .filter(
+                  (fragment) =>
+                    fragment &&
+                    types.includes(String(fragment.type || '').toUpperCase()) &&
+                    typeof fragment.content === 'string',
+                )
+                .map((fragment) => fragment.content)
+                .join('')
+            const remoteContent = readFragments(['RESPONSE', 'TEXT', 'ANSWER']).trim()
+            const remoteReasoning = readFragments(['THINK', 'REASON', 'REASONING']).trim()
+            if (remoteContent) content = remoteContent
+            if (remoteReasoning) reasoning = remoteReasoning
+            const remoteRefs = collectReferences(fragments)
+            if (remoteRefs.length) references = remoteRefs
+          } else {
+            // Streamed deltas were already appended; if the upstream sent the
+            // whole message again, replace instead of duplicating.
+            if (finalContent) {
+              if (finalContent.startsWith(originalContent)) content = finalContent
+              else if (!content.endsWith(finalContent)) content += finalContent
+            }
+            if (finalReasoning) {
+              if (finalReasoning.startsWith(originalReasoning)) reasoning = finalReasoning
+              else if (!reasoning.endsWith(finalReasoning)) reasoning += finalReasoning
+            }
+          }
+        }
+
+        await store.updateMessage(convId, messageId, {
+          content,
+          reasoning,
+          ...(references.length ? { references } : {}),
+          streaming: false,
+          aborted: false,
+          error: null,
+        })
+        if (references.length) send('references', { references })
+        send('done', { messageId, content, reasoning, references })
+      } catch (err) {
+        const aborted = controller.signal.aborted || err.name === 'AbortError'
+        await store.updateMessage(convId, messageId, {
+          content,
+          reasoning,
+          ...(references.length ? { references } : {}),
+          streaming: false,
+          aborted,
+          error: aborted ? null : err.message || '继续生成失败',
+        })
+        if (aborted) send('aborted', {})
+        else send('error', { message: friendlyError(err), code: err.code || null })
+      } finally {
+        cleanup()
+        if (!res.writableEnded) res.end()
+      }
     }),
   )
 
@@ -937,6 +1142,58 @@ export async function createDeepDockServer({ dataDir, distDir = null, mock = fal
         failed: results.filter((item) => item.status === 'failed').length,
         conversations: sortedConversations(),
       })
+    }),
+  )
+
+  // Background friendly: import the newest few web sessions that are not in
+  // the local store yet. Capped so it never floods the sidebar in one go.
+  app.post(
+    '/api/sync/auto',
+    wrap(async (req, res) => {
+      if (!credentials.connected) {
+        return res.status(401).json({ error: 'NOT_CONNECTED', message: '请先连接 DeepSeek 账号。' })
+      }
+      try {
+        const sessions = mock
+          ? mockRemoteSessions().sessions
+          : (await fetchRemoteSessions({ limit: 20 })).sessions
+        const pending = sessions
+          .filter((session) => !store.findByDsSessionId(session.id))
+          .slice(0, 5)
+        const imported = []
+        for (const session of pending) {
+          try {
+            const history = mock ? mockRemoteHistory(session.id) : await deepseek.historyMessages(session.id)
+            const converted = convertRemoteHistory(history, {
+              title: session.title,
+              pinned: session.pinned,
+              updatedAt: session.updatedAt,
+            })
+            if (!converted.messages.length) continue
+            const { meta } = await store.importConversation({ dsSessionId: session.id, ...converted })
+            imported.push({
+              id: session.id,
+              conversationId: meta.id,
+              title: meta.title,
+              messages: meta.messageCount,
+            })
+          } catch (err) {
+            if (err.code === 40003 || err.code === 'unauthorized' || err.code === 40002) {
+              return res
+                .status(401)
+                .json({ error: 'SESSION_EXPIRED', message: '登录已失效，请重新连接账号。' })
+            }
+          }
+        }
+        res.json({
+          checked: sessions.length,
+          imported: imported.length,
+          conversations: imported,
+          all: sortedConversations(),
+        })
+      } catch (err) {
+        res.status(502).json({ error: 'UPSTREAM', message: friendlyError(err) })
+      }
     }),
   )
 

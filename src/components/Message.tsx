@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { AlertCircle, Brain, FileText, RotateCw } from 'lucide-react'
+import { AlertCircle, Brain, FileText, Play, RotateCw } from 'lucide-react'
 import { Markdown } from './Markdown'
 import { CopyButton } from './ui'
 import { formatChars } from '../lib/projects'
@@ -121,9 +121,13 @@ function Attachments({ items }: { items: Attachment[] }) {
 export const MessageView = memo(function MessageView({
   message,
   onRegenerate,
+  onContinue,
+  continuing = false,
 }: {
   message: Message
   onRegenerate?: () => void
+  onContinue?: () => void
+  continuing?: boolean
 }) {
   const streaming = Boolean(message.streaming)
   const shown = useStreamText(message.content, streaming)
@@ -190,6 +194,15 @@ export const MessageView = memo(function MessageView({
       ) : (
         <Markdown content={shown} references={message.references} />
       )}
+
+      {onContinue ? (
+        <div className="msg-continue">
+          <button type="button" className="ghost-btn" onClick={onContinue} disabled={continuing}>
+            <Play size={12} />
+            {continuing ? '继续生成中…' : '继续生成'}
+          </button>
+        </div>
+      ) : null}
 
       {message.error ? (
         <div className="notice">

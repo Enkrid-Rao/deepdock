@@ -30,6 +30,8 @@ export function ChatView({
   conversation,
   projects,
   streaming,
+  continuingId = null,
+  onContinue,
   draft,
   onDraftChange,
   onSend,
@@ -59,6 +61,8 @@ export function ChatView({
   conversation: Conversation | null
   projects: Project[]
   streaming: boolean
+  continuingId?: string | null
+  onContinue?: (message: Message) => void
   draft: string
   onDraftChange: (value: string) => void
   onSend: () => void
@@ -94,6 +98,7 @@ export function ChatView({
 
   const messages: Message[] = conversation?.messages || []
   const project = projects.find((p) => p.id === conversation?.projectId) || null
+  const lastAssistantId = [...messages].reverse().find((message) => message.role === 'assistant')?.id
 
   const measure = () => {
     const el = scrollerRef.current
@@ -330,6 +335,16 @@ export function ChatView({
                 onRegenerate={
                   message.role === 'assistant' && !message.streaming ? onRegenerate : undefined
                 }
+                onContinue={
+                  message.role === 'assistant' &&
+                  !message.streaming &&
+                  message.dsMessageId &&
+                  (message.error || message.aborted) &&
+                  message.id === lastAssistantId
+                    ? () => onContinue?.(message)
+                    : undefined
+                }
+                continuing={continuingId === message.id}
               />
             ))}
             <div style={{ height: 6 }} />

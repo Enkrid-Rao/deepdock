@@ -218,6 +218,46 @@ export class DeepSeek {
   }
 
   /**
+   * Continue an interrupted / incomplete assistant message (the web "继续生成"
+   * button). `messageId` is the upstream assistant message id.
+   */
+  async continueCompletion({ sessionId, messageId, fallbackToResume = true, signal }) {
+    const targetPath = '/api/v0/chat/completion'
+    const powHeader = await this.solveChallenge(targetPath)
+    const res = await fetch(ORIGIN + '/chat/continue', {
+      method: 'POST',
+      headers: this.headers({ extra: { 'x-ds-pow-response': powHeader } }),
+      body: JSON.stringify({
+        chat_session_id: sessionId,
+        message_id: messageId,
+        fallback_to_resume: Boolean(fallbackToResume),
+      }),
+      signal,
+    })
+
+    const ctype = res.headers.get('content-type') || ''
+    if (!ctype.includes('text/event-stream')) {
+      const text = await res.text()
+      let json = null
+      try {
+        json = JSON.parse(text)
+      } catch {
+        /* not json */
+      }
+      throw new DeepSeekError(
+        mapCodeMessage(json?.code, json?.msg, json?.data?.biz_msg) ||
+          `继续生成失败（HTTP ${res.status}）`,
+        {
+          code: json?.code || res.status,
+          bizCode: json?.data?.biz_code,
+          raw: text.slice(0, 400),
+        },
+      )
+    }
+    return res
+  }
+
+  /**
    * Upload one attachment to the web account.
    *
    * The browser posts multipart/form-data to `/file/upload_file` with a PoW

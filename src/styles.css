@@ -1343,6 +1343,15 @@ kbd {
 
 /* error notice */
 
+.msg-continue {
+  margin-top: 10px;
+}
+
+.msg-continue .ghost-btn {
+  height: 28px;
+  font-size: 12px;
+}
+
 .notice {
   display: flex;
   align-items: flex-start;
