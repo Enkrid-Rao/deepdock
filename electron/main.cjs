@@ -17,11 +17,42 @@ let dataDir = null
 let serverPort = null
 
 app.setName('DeepDock')
+app.setAppUserModelId('com.deepdock.app')
+
+/* --------------------------------------------------------------- portable */
+
+// 绿色版 = exe 旁边有 portable.flag 的那个文件夹。数据写进同目录的
+// DeepDock-data，整个文件夹可以拷到 U 盘带走、删掉即卸载；安装版仍然用
+// %APPDATA%\DeepDock。判定必须在 app ready 之前完成，Chromium 的缓存目录
+// 也跟着 userData 走。
+const EXE_DIR = path.dirname(process.execPath)
+const PORTABLE_DATA = path.join(EXE_DIR, 'DeepDock-data')
+
+function usablePortableDir() {
+  if (!app.isPackaged) return null
+  if (!fs.existsSync(path.join(EXE_DIR, 'portable.flag'))) return null
+  try {
+    fs.mkdirSync(PORTABLE_DATA, { recursive: true })
+    const probe = path.join(PORTABLE_DATA, '.write-test')
+    fs.writeFileSync(probe, '')
+    fs.unlinkSync(probe)
+    return PORTABLE_DATA
+  } catch (err) {
+    // 放在 Program Files 或只读 U 盘里时不让程序起不来，退回 AppData 继续跑
+    console.warn('[deepdock] 绿色版目录不可写，回落到 AppData：', err?.message || err)
+    return null
+  }
+}
+
+const portableDir = usablePortableDir()
+const IS_PORTABLE = Boolean(portableDir)
+
 app.setPath(
   'userData',
-  process.env.DEEPDOCK_USER_DATA || path.join(app.getPath('appData'), 'DeepDock'),
+  process.env.DEEPDOCK_USER_DATA ||
+    portableDir ||
+    path.join(app.getPath('appData'), 'DeepDock'),
 )
-app.setAppUserModelId('com.deepdock.app')
 
 /* ------------------------------------------------------------------ state */
 
@@ -352,6 +383,8 @@ ipcMain.handle('deepdock:open-external', async (event, url) => {
 ipcMain.handle('deepdock:info', () => ({
   version: app.getVersion(),
   dataDir,
+  portable: IS_PORTABLE,
+  exeDir: EXE_DIR,
   platform: process.platform,
   electron: process.versions.electron,
 }))
@@ -409,7 +442,7 @@ function friendlyUpdateError(err) {
 }
 
 async function downloadUpdate() {
-  if (IS_DEV) return updateSnapshot()
+  if (IS_DEV || IS_PORTABLE) return updateSnapshot()
   if (updateState.status === 'downloading') return updateSnapshot()
   try {
     pushUpdateState({ status: 'downloading', percent: 0, message: '' })
@@ -466,6 +499,13 @@ function setupAutoUpdater() {
     return
   }
 
+  // 绿色版没有安装器，只能手动换压缩包。绝不能初始化 electron-updater：
+  // 它会下载 NSIS 安装包，并在退出时静默把绿色版装成 %LOCALAPPDATA% 下的安装版。
+  if (IS_PORTABLE) {
+    updateState.status = 'portable'
+    return
+  }
+
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.on('error', (err) => {
@@ -505,6 +545,8 @@ function setupAutoUpdater() {
 
 ipcMain.handle('deepdock:check-updates', async () => {
   if (IS_DEV) return { ...updateSnapshot(), status: 'dev' }
+  // 绿色版不碰更新器：状态固定为 portable，界面上给「去 Releases 下载」的指引
+  if (IS_PORTABLE) return { ...updateSnapshot(), status: 'portable' }
   try {
     pushUpdateState({ status: 'checking', message: '' })
     const result = await autoUpdater.checkForUpdates()
@@ -532,7 +574,7 @@ ipcMain.handle('deepdock:check-updates', async () => {
 ipcMain.handle('deepdock:download-update', () => downloadUpdate())
 ipcMain.handle('deepdock:update-state', () => updateSnapshot())
 ipcMain.handle('deepdock:install-update', () => {
-  if (!IS_DEV && updateState.status === 'downloaded') {
+  if (!IS_DEV && !IS_PORTABLE && updateState.status === 'downloaded') {
     setImmediate(() => autoUpdater.quitAndInstall(true, true))
     return { ok: true }
   }

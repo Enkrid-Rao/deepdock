@@ -72,4 +72,8 @@ const paths = await packager({
 })
 
 console.log('\n✔ packaged:')
-for (const p of paths) console.log('  ' + p)
+for (const p of paths) {
+  // 和正式绿色包一样带标记：数据写进同目录的 DeepDock-data，不碰 %APPDATA%
+  fs.writeFileSync(path.join(p, 'portable.flag'), 'DeepDock portable build\n')
+  console.log('  ' + p)
+}

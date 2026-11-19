@@ -31,14 +31,18 @@
 | 包 | 说明 |
 | --- | --- |
 | `DeepDock-Setup-*.exe` | 安装版，可选安装目录，创建开始菜单 / 桌面快捷方式 |
-| `DeepDock-*-win-x64.zip` | 绿色版，解压后直接运行 `DeepDock.exe` |
+| `DeepDock-*-portable-win64.zip` | 绿色版：解压出 `DeepDock\` 文件夹，运行里面的 `DeepDock.exe`，数据在同目录 `DeepDock-data` |
 
 第一次打开会进入连接页。桌面版会**自动**从本机 Chrome / Edge 读出 `chat.deepseek.com` 的登录凭证并验证，
 成功就直接进入；万一读不到（比如只用无痕窗口、或浏览器里没登录），再按页面上的三步手动粘贴一次。
 
-两种包的数据都在 `%APPDATA%\DeepDock\`，安装版卸载时**不会**删除对话数据。
+安装版的数据在 `%APPDATA%\DeepDock\`；绿色版的数据在解压目录的 `DeepDock\DeepDock-data\`，
+整个文件夹可以拷到 U 盘带走，删掉文件夹就是卸载，不写注册表、不在系统目录留东西。
+安装版卸载时**不会**删除对话数据（默认保留，会问一次）。
 
 安装版会自己检查更新：启动 15 秒后查一次 GitHub Releases，之后每 6 小时查一次。发现新版本后**不会偷偷下载**，会先问你要不要下载安装；就算这次选了「稍后」，设置页「应用 → 更新」也会一直显示发现的新版本，随时可以回去装。手动检查在左下角头像菜单 →「检查更新」，或设置页里的「检查更新」。
+**绿色版不参与自动更新**（它没有安装器，自动更新会把它装成安装版）：到 Releases 下载新的压缩包，
+解压后把旧的 `DeepDock-data` 目录放进新文件夹即可。
 
 卸载安装版：Windows **设置 → 应用 → 已安装的应用 → DeepDock**（开始菜单的 DeepDock 文件夹里也有「卸载 DeepDock」）。卸载时会问一次**是否同时删除本机的对话、项目和设置数据**（`%APPDATA%\DeepDock`），默认保留；选「是」才会删。
 
@@ -58,8 +62,9 @@ node scripts/check-auth.mjs --validate   # 诊断浏览器登录读取
 重新打包：
 
 ```bash
-npm run package      # 绿色目录 → release/DeepDock-win32-x64/
-npm run installer    # 安装包 + 绿色 zip → release/builder/
+npm run package      # 绿色目录（带 portable.flag）→ release/DeepDock-win32-x64/
+npm run installer    # 安装包 → release/builder/
+npm run portable     # 绿色 zip → release/builder/DeepDock-<版本>-portable-win64.zip
 npm run icon         # 重新生成 build/icon.ico
 ```
 
@@ -78,9 +83,9 @@ npm run release -- 1.4.3 --notes notes/1.4.3.md
 
 脚本会依次：校验 main / 干净工作区 / 版本号递增 → 改 `package.json` → 构建安装包与绿色版 →
 提交 `chore: release <version>` → 打 tag → 推送 main 和 tag（失败自动重试）→ 用 `gh` 建 Release
-并上传 exe / blockmap / `latest.yml` / zip（缺 latest.yml 更新不会生效）。
+并上传 exe / blockmap / `latest.yml` / `DeepDock-<版本>-portable-win64.zip`（缺 latest.yml 更新不会生效）。
 
-- 只想要构建不发布：`npm run installer`
+- 只想要构建不发布：`npm run installer`（安装包）+ `npm run portable`（绿色 zip）
 - 预览步骤不执行：`--dry-run`；产物已构建好：`--skip-build`
 - 网络需要能访问 GitHub：脚本默认走 Clash 的 `http://127.0.0.1:7898`，
   可用 `HTTPS_PROXY` / `DEEPDOCK_PROXY` / `--proxy` 覆盖。

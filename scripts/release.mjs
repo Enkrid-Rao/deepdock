@@ -9,7 +9,7 @@
 // What it does (in order):
 //   1. checks main branch / clean worktree / version is newer than package.json
 //   2. bumps package.json + package-lock.json (no tag yet)
-//   3. builds the installer (npm run installer) unless --skip-build
+//   3. builds the installer and the portable zip unless --skip-build
 //   4. commits "chore: release X", tags vX, pushes main + tag (retries 3x)
 //   5. creates the GitHub release (latest) with exe / blockmap / latest.yml / zip
 //
@@ -107,11 +107,14 @@ async function main() {
 
   const setup = `release/builder/DeepDock-Setup-${version}.exe`
   const blockmap = `${setup}.blockmap`
-  const zip = `release/builder/DeepDock-${version}-win-x64.zip`
+  const zip = `release/builder/DeepDock-${version}-portable-win64.zip`
   const latest = 'release/builder/latest.yml'
 
   run(`npm version ${version} --no-git-tag-version`)
-  if (!skipBuild) run('npm run installer')
+  if (!skipBuild) {
+    run('npm run installer')
+    run('npm run portable')
+  }
 
   if (!dryRun) {
     for (const file of [setup, blockmap, zip, latest]) {

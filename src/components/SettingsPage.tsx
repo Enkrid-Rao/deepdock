@@ -37,10 +37,18 @@ type DesktopInfo = {
   version?: string
   electron?: string
   dataDir?: string
+  portable?: boolean
 }
 
 type DesktopBridge = {
   info?: () => Promise<DesktopInfo>
+  openExternal?: (url: string) => Promise<void>
+}
+
+const RELEASES_URL = 'https://github.com/Enkrid-Rao/deepdock/releases/latest'
+
+function currentBridge(): DesktopBridge | undefined {
+  return (window as unknown as { deepdockDesktop?: DesktopBridge }).deepdockDesktop
 }
 
 const MODES: { key: AppearanceMode; label: string; icon: typeof Sun }[] = [
@@ -72,6 +80,8 @@ function updateText(update: UpdateState | null): string {
       return `检查更新失败：${update.message}`
     case 'dev':
       return '开发模式下不检查更新'
+    case 'portable':
+      return '当前为绿色版（免安装）'
     default:
       return '启动时会自动检查更新'
   }
@@ -513,7 +523,7 @@ export function SettingsPage({
             {section === 'app' ? (
               <>
                 <div className="settings-grid">
-                  <Card title="版本" hint="当前安装的桌面版信息。">
+                  <Card title="版本" hint={info?.portable ? '当前绿色版（免安装）的信息。' : '当前安装的桌面版信息。'}>
                     <dl className="settings-facts">
                       <div>
                         <dt>DeepDock</dt>
@@ -529,14 +539,19 @@ export function SettingsPage({
                       </div>
                     </dl>
                     <p className="settings-note">
-                      卸载：Windows 设置 → 应用 → 已安装的应用 → DeepDock，或开始菜单里的「卸载 DeepDock」。
-                      卸载时会询问是否一并删除本机数据，默认保留。
+                      {info?.portable
+                        ? '卸载：退出 DeepDock，直接删掉整个文件夹即可（数据在 DeepDock-data 里，会一起删除）。不写注册表，不在系统目录留东西。'
+                        : '卸载：Windows 设置 → 应用 → 已安装的应用 → DeepDock，或开始菜单里的「卸载 DeepDock」。卸载时会询问是否一并删除本机数据，默认保留。'}
                     </p>
                   </Card>
 
                   <Card
                     title="更新"
-                    hint="启动后自动检查 GitHub Releases；是否下载、是否安装都由你决定。"
+                    hint={
+                      info?.portable
+                        ? '绿色版不自动更新：到 Releases 下载新的压缩包，解压时保留 DeepDock-data 即可。'
+                        : '启动后自动检查 GitHub Releases；是否下载、是否安装都由你决定。'
+                    }
                   >
                     <div className="settings-update" data-status={updateState?.status || 'idle'}>
                       <span className="settings-update-text">{updateText(updateState)}</span>
@@ -557,20 +572,32 @@ export function SettingsPage({
                           <RefreshCw size={14} /> 重启并安装
                         </button>
                       ) : null}
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={onCheckUpdates}
-                        disabled={updateState?.status === 'checking' || updateState?.status === 'downloading'}
-                      >
-                        <RefreshCw size={14} /> 检查更新
-                      </button>
+                      {info?.portable ? (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => void currentBridge()?.openExternal?.(RELEASES_URL)}
+                        >
+                          <Download size={14} /> 打开发布页
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={onCheckUpdates}
+                          disabled={updateState?.status === 'checking' || updateState?.status === 'downloading'}
+                        >
+                          <RefreshCw size={14} /> 检查更新
+                        </button>
+                      )}
                       <button type="button" className="btn btn-ghost" onClick={onOpenDataFolder}>
                         <FolderInput size={14} /> 打开数据目录
                       </button>
                     </div>
                     <p className="settings-note">
-                      自动更新走 GitHub，国内网络需要能访问 GitHub（可开启系统代理）。
+                      {info?.portable
+                        ? '数据就在程序目录的 DeepDock-data 里，升级或搬走时连同它一起带走；删掉整个文件夹就是卸载。'
+                        : '自动更新走 GitHub，国内网络需要能访问 GitHub（可开启系统代理）。'}
                     </p>
                   </Card>
                 </div>

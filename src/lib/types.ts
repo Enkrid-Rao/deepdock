@@ -103,6 +103,7 @@ export type UpdateStatus =
   | 'current'
   | 'error'
   | 'dev'
+  | 'portable'
 
 export type UpdateState = {
   status: UpdateStatus
